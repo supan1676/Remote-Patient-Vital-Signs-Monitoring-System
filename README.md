@@ -104,3 +104,20 @@ When any alert condition is met:
 2. **Serial Stream** — Immediately flags `"risk": "EMERGENCY"` or `"WARNING"` with an alert description.
 3. **Dashboard / Console** — Highlights the affected parameter and prompts the user to check on the patient.
 
+---
+
+## 🔮 Future Scope & Planned Sensors (ਬਾਕੀ ਰਹਿੰਦੇ ਸੈਂਸਰ / Roadmap)
+
+Currently, the device captures the primary 4 vital metrics (**Pulse, SpO₂, Temperature, and Fall/Motion**). To evolve this prototype into a comprehensive clinical-grade Remote Patient Monitoring (RPM) system, the following sensors and modules are planned for future integration:
+
+| Sensor / Module | Primary Medical Purpose | Target Interface | Clinical Value |
+|:---|:---|:---|:---|
+| **AD8232 / MAX30003** | Single-Lead ECG (Electrocardiogram) | SPI / Analog ADC | Detects arrhythmias, atrial fibrillation, and Heart Rate Variability (HRV). |
+| **GSR / EDA Sensor** | Galvanic Skin Response (Skin Conductance) | Analog ADC | Measures stress, anxiety, emotional arousal, and sympathetic nervous response. |
+| **Cuffless BP (PTT)** | Blood Pressure Estimation (Systolic/Diastolic) | Algorithm (ECG + PPG) | Uses Pulse Transit Time between ECG R-peak and MAX30102 PPG peak for continuous BP. |
+| **Respiration Sensor** | Respiratory Rate & Breathing Effort | Piezoelectric / PPG-derived | Tracks breaths-per-minute for asthma, COPD, and sleep apnea monitoring. |
+| **NEO-6M / NEO-8M** | GPS Location Tracker | Hardware UART | Emergency geolocation dispatch for elderly fall victims or Alzheimer's geo-fencing. |
+| **BME680 / BME280** | Ambient Air Quality, Humidity & Temp | I2C (Bus 0) | Monitors environmental factors triggering respiratory attacks. |
+| **BLE / MQTT Cloud** | Wireless Telemetry & Mobile App Sync | ESP32-S3 WiFi/BLE | Streams patient telemetry directly to cloud databases (AWS IoT/Supabase) and caregiver apps. |
+
+
