@@ -498,7 +498,7 @@
       tag.textContent = triage;
       tag.className = "triage-tag " + (triage === "EMERGENCY" ? "triage-critical" : (triage === "WARNING" ? "triage-warning" : "triage-normal"));
 
-      document.getElementById("aiFindings").textContent = data.ai_context || "All parameters within standard baseline ranges.";
+      document.getElementById("aiFindings").textContent = data.status_summary || data.ai_context || "All parameters within standard baseline ranges.";
 
       const actionsEl = document.getElementById("aiActions");
       actionsEl.innerHTML = "";

@@ -1,5 +1,5 @@
 /**
- * IoMT Autonomous Patient Monitoring & AI/LLM Real-Time Telemetry Node
+ * IoMT Patient Monitoring & Real-Time Telemetry Node
  * Target: VIREXON ESP32-S3 N16R8 Development Board
  * 
  * Hardware Under Test:
@@ -10,11 +10,12 @@
  *   - Pushbutton (GPIO 5 to GND, Active LOW)
  * 
  * Features:
- *   - Auto-boots immediately upon power-up with full hardware self-test
- *   - Fast 25 Hz sampling for IMU impact/fall detection and PPG pulse waveform
- *   - 1 Hz high-precision telemetry stream in both human card and machine-readable JSON formats
- *   - Direct feed into Web Dashboards and Threshold Alert Checkers
- *   - Non-blocking hot-plug auto-recovery for all sensors
+ *   - Real optical pulse beat detection (PBA algorithm via heartRate.h)
+ *   - Dynamic AC/DC blood oxygen (SpO2) ratio computation
+ *   - 2-Stage physical fall detection (free-fall dip followed by impact spike)
+ *   - Interactive SOS alert button with press-to-cancel capability
+ *   - 1 Hz telemetry stream in human card and compact JSON formats
+ *   - Dedicated dual hardware I2C buses on ESP32-S3
  */
 
 #include <Arduino.h>
@@ -27,6 +28,7 @@
 #include <Adafruit_MPU6050.h>
 #include <Adafruit_Sensor.h>
 #include <MAX30105.h>
+#include <heartRate.h>
 #include <ArduinoJson.h>
 
 // Primary I2C Bus 0 (OLED, MLX90614, MAX30102)
@@ -78,12 +80,17 @@ bool sosActive = false;
 unsigned long sosClearTime = 0;
 bool fallActive = false;
 unsigned long fallClearTime = 0;
+unsigned long freeFallTime = 0; // Timestamp of free-fall dip for 2-stage fall detection
 
-
-// Heart rate tracking
+// Real Optical Pulse & Beat Tracking (Maxim / SparkFun PBA Algorithm)
 #define BPM_BUFFER_SIZE 4
-int bpmHistory[BPM_BUFFER_SIZE] = {72, 72, 72, 72};
-int bpmIndex = 0;
+uint8_t rates[BPM_BUFFER_SIZE] = {0, 0, 0, 0};
+uint8_t rateSpot = 0;
+long lastBeatTime = 0;
+
+// Dynamic AC/DC SpO2 tracking over pulse windows
+long irMin = 0x7FFFFFFF, irMax = 0;
+long redMin = 0x7FFFFFFF, redMax = 0;
 
 // Loop timers
 unsigned long lastReportTime = 0;
@@ -211,9 +218,18 @@ void mpuRawReadAccel(uint8_t addr, float &ax, float &ay, float &az) {
     Wire1.requestFrom(addr, (uint8_t)6);
 
     if (Wire1.available() >= 6) {
-        int16_t rawX = (Wire1.read() << 8) | Wire1.read();
-        int16_t rawY = (Wire1.read() << 8) | Wire1.read();
-        int16_t rawZ = (Wire1.read() << 8) | Wire1.read();
+        // Read MSB and LSB into explicit separate variables to guarantee byte order in C++
+        uint8_t x_h = Wire1.read();
+        uint8_t x_l = Wire1.read();
+        uint8_t y_h = Wire1.read();
+        uint8_t y_l = Wire1.read();
+        uint8_t z_h = Wire1.read();
+        uint8_t z_l = Wire1.read();
+
+        int16_t rawX = (int16_t)((x_h << 8) | x_l);
+        int16_t rawY = (int16_t)((y_h << 8) | y_l);
+        int16_t rawZ = (int16_t)((z_h << 8) | z_l);
+
         // ±8g range: LSB sensitivity = 4096 LSB/g
         ax = rawX / 4096.0f;
         ay = rawY / 4096.0f;
@@ -277,6 +293,7 @@ void outputTelemetry(bool urgent = false) {
     Serial.print(F("\"heart_rate\":")); Serial.print(fingerDetected ? currentBpm : 0);
     Serial.print(F(",\"spo2\":")); Serial.print(fingerDetected ? currentSpO2 : 0);
     Serial.print(F(",\"finger_on\":")); Serial.print(fingerDetected ? F("true") : F("false"));
+    Serial.print(F(",\"raw_ir\":")); Serial.print(fingerDetected ? lastIR : 0);
     Serial.print(F(",\"temp_core\":")); Serial.print(coreTempC > 0 ? coreTempC : 0.0f, 1);
     Serial.print(F(",\"temp_skin\":")); Serial.print(objTempC > 0 ? objTempC : 0.0f, 1);
     Serial.print(F(",\"temp_amb\":")); Serial.print(ambTempC > 0 ? ambTempC : 0.0f, 1);
@@ -286,10 +303,10 @@ void outputTelemetry(bool urgent = false) {
 
     Serial.print(F(",\"alerts\":{"));
     Serial.print(F("\"sos\":")); Serial.print(sosActive ? F("true") : F("false"));
-    Serial.print(F(",\"fall\":")); Serial.print(fallActive ? F("true") : F("false"));
+    Serial.print(F("\"fall\":")); Serial.print(fallActive ? F("true") : F("false"));
     Serial.print(F("}"));
 
-    Serial.print(F(",\"ai_context\":\"")); Serial.print(clinicalSummary); Serial.print(F("\""));
+    Serial.print(F(",\"status_summary\":\"")); Serial.print(clinicalSummary); Serial.print(F("\""));
     Serial.println(F("}"));
 
     // 3. Clean Formatted Terminal Monitoring Card
@@ -661,38 +678,44 @@ void loop() {
     if (sosActive && now >= sosClearTime) sosActive = false;
     if (fallActive && now >= fallClearTime) fallActive = false;
 
-    // 3. Interactive SOS Button (GPIO 5 with 250ms debounce)
+    // 3. Interactive SOS Button with Press-to-Cancel capability
     static int lastBtnState = HIGH;
     static unsigned long lastBtnPress = 0;
     int btnState = digitalRead(BUTTON_PIN);
 
-    if (btnState == LOW && lastBtnState == HIGH && (now - lastBtnPress > 250)) {
+    if (btnState == LOW && lastBtnState == HIGH && (now - lastBtnPress > 300)) {
         lastBtnPress = now;
-        sosActive = true;
-        sosClearTime = now + 4000; // Hold SOS alert active for 4 seconds
 
-
-        Serial.println(F("\n>>> [EMERGENCY SOS TRIGGERED] Patient pushed GPIO 5 SOS button! <<<"));
-        outputTelemetry(true);     // Transmit urgent telemetry packet immediately
-        updateOLED();
+        if (!sosActive) {
+            sosActive = true;
+            sosClearTime = now + 15000; // Hold active for 15s unless cancelled
+            Serial.println(F("\n>>> [EMERGENCY SOS TRIGGERED] Patient pushed SOS button! <<<"));
+            outputTelemetry(true);
+            updateOLED();
+        } else {
+            // Cancel active SOS
+            sosActive = false;
+            sosClearTime = 0;
+            Serial.println(F("\n>>> [SOS CANCELLED] Patient pressed button again to cancel alert. <<<"));
+            outputTelemetry(true);
+            updateOLED();
+        }
     }
     lastBtnState = btnState;
 
-    // 4. Fast 25 Hz Sampling Tick (every 40ms): IMU Fall Tracking & MAX30102 PPG
-    if (now - lastFastTick >= 40) {
+    // 4. Fast 50 Hz Sampling Tick (every 20ms): 2-Stage Fall Tracking & Optical PPG
+    if (now - lastFastTick >= 20) {
         lastFastTick = now;
 
-        // Read MPU-6050 Motion, Step & Impact
+        // Read MPU-6050 Motion, Steps & 2-Stage Fall Detection
         if (mpuOK) {
             float ax, ay, az;
             bool gotData = false;
 
             if (mpuRawMode) {
-                // Raw register read for clone chips
                 mpuRawReadAccel(mpuAddress, ax, ay, az);
                 gotData = true;
             } else {
-                // Adafruit library read
                 sensors_event_t a, g, temp;
                 if (mpu.getEvent(&a, &g, &temp)) {
                     ax = a.acceleration.x / 9.80665f;
@@ -713,48 +736,103 @@ void loop() {
                 }
                 lastMag = delta;
 
-                // Fall Impact Detection (>2.5g impact spike)
-                if (currentMotionG > 2.5f && !fallActive) {
-                    fallActive = true;
-                    fallClearTime = now + 5000; // Keep fall alert state active for 5s
+                // Two-Stage Fall Detection Algorithm:
+                // Stage 1: Free-Fall Drop (weightlessness / sudden descent where G-force < 0.6g)
+                if (currentMotionG < 0.6f) {
+                    freeFallTime = now;
+                }
 
-                    Serial.print(F("\n>>> [FALL IMPACT DETECTED] Force: "));
-                    Serial.print(currentMotionG, 2);
-                    Serial.println(F(" g! Transmitting Emergency Telemetry... <<<"));
-                    outputTelemetry(true);
-                    updateOLED();
+                // Stage 2: Ground Impact Spike (> 2.5g) within 60ms to 600ms of free-fall
+                if (currentMotionG > 2.5f && !fallActive) {
+                    if (freeFallTime > 0 && (now - freeFallTime <= 600) && (now - freeFallTime >= 60)) {
+                        fallActive = true;
+                        fallClearTime = now + 6000; // Hold fall alert for 6 seconds
+                        freeFallTime = 0;           // Consume free-fall event
+
+                        Serial.print(F("\n>>> [VERIFIED 2-STAGE FALL DETECTED] Force: "));
+                        Serial.print(currentMotionG, 2);
+                        Serial.println(F(" g after free-fall! <<<"));
+                        outputTelemetry(true);
+                        updateOLED();
+                    }
                 }
             }
         }
 
-        // Read MAX30102 PPG Data
+        // Read MAX30102 Optical PPG Data (Real Pulse & Dynamic AC/DC SpO2)
         if (maxOK) {
             lastIR = max30102.getIR();
             lastRed = max30102.getRed();
 
-            if (lastIR > 50000) { // Finger attached
+            if (lastIR > 50000) { // Finger physically present on sensor
                 fingerDetected = true;
 
-                // Calculate realistic SpO2 from Red/IR absorption ratio
-                if (lastRed > 1000) {
-                    float ratio = (float)lastRed / (float)lastIR;
-                    currentSpO2 = constrain((int)(110.0f - 25.0f * ratio), 85, 100);
-                } else {
-                    currentSpO2 = 98;
+                // Track signal envelope for dynamic AC/DC ratio calculation
+                if (lastIR < irMin) irMin = lastIR;
+                if (lastIR > irMax) irMax = lastIR;
+                if (lastRed < redMin) redMin = lastRed;
+                if (lastRed > redMax) redMax = lastRed;
+
+                // 1. Real Heart Beat Detection (Maxim PBA algorithm via heartRate.h)
+                if (checkForBeat(lastIR)) {
+                    long delta = now - lastBeatTime;
+                    lastBeatTime = now;
+
+                    // Valid physiological heart rate range: 40 BPM (1500ms) to 220 BPM (272ms)
+                    if (delta > 270 && delta < 1500) {
+                        float instantBpm = 60.0f / (delta / 1000.0f);
+
+                        if (instantBpm >= 40.0f && instantBpm <= 220.0f) {
+                            rates[rateSpot++] = (uint8_t)instantBpm;
+                            rateSpot %= BPM_BUFFER_SIZE;
+
+                            int sum = 0;
+                            int count = 0;
+                            for (int i = 0; i < BPM_BUFFER_SIZE; i++) {
+                                if (rates[i] > 0) {
+                                    sum += rates[i];
+                                    count++;
+                                }
+                            }
+                            if (count > 0) {
+                                currentBpm = sum / count;
+                            }
+                        }
+                    }
+
+                    // 2. Real SpO2 Calculation from pulsatile AC and baseline DC components
+                    long acIR = irMax - irMin;
+                    long dcIR = (irMax + irMin) / 2;
+                    long acRed = redMax - redMin;
+                    long dcRed = (redMax + redMin) / 2;
+
+                    // Reset tracking window for the next arterial pulse wave
+                    irMin = 0x7FFFFFFF; irMax = 0;
+                    redMin = 0x7FFFFFFF; redMax = 0;
+
+                    if (acIR > 25 && dcIR > 10000 && acRed > 25 && dcRed > 10000) {
+                        float ratio = ((float)acRed / (float)dcRed) / ((float)acIR / (float)dcIR);
+                        // Standard empirical calibration curve: SpO2 = 110 - 25 * R
+                        int calculatedSpO2 = (int)(110.0f - 25.0f * ratio);
+                        if (calculatedSpO2 >= 80 && calculatedSpO2 <= 100) {
+                            currentSpO2 = calculatedSpO2;
+                        }
+                    }
                 }
 
-                // Heart rate dynamic computation (smooth rolling buffer)
-                int estimatedBpm = 70 + (int)(now / 2000) % 8;
-                bpmHistory[bpmIndex] = estimatedBpm;
-                bpmIndex = (bpmIndex + 1) % BPM_BUFFER_SIZE;
-                
-                int sum = 0;
-                for (int i = 0; i < BPM_BUFFER_SIZE; i++) sum += bpmHistory[i];
-                currentBpm = sum / BPM_BUFFER_SIZE;
+                // If finger is on sensor but no pulse detected for 3.5s, reset BPM to 0
+                if (lastBeatTime > 0 && (now - lastBeatTime > 3500)) {
+                    currentBpm = 0;
+                }
             } else {
+                // Finger removed: reset all vitals and tracking buffers immediately
                 fingerDetected = false;
                 currentBpm = 0;
                 currentSpO2 = 0;
+                lastBeatTime = 0;
+                irMin = 0x7FFFFFFF; irMax = 0;
+                redMin = 0x7FFFFFFF; redMax = 0;
+                for (int i = 0; i < BPM_BUFFER_SIZE; i++) rates[i] = 0;
             }
         }
     }

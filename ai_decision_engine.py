@@ -108,11 +108,13 @@ def evaluate_clinical_status(packet):
         "patient_metrics": {
             "heart_rate_bpm": hr if finger_on else "UNATTACHED",
             "spo2_percent": spo2 if finger_on else "UNATTACHED",
+            "raw_ir": vitals.get("raw_ir", 0) if finger_on else "UNATTACHED",
             "core_temp_c": temp_core if temp_core > 0 else "PENDING",
             "step_count": steps,
             "motion_g": round(motion_g, 2),
             "hardware_health": f"{sensors.get('active', 0)}/4 sensors online"
         },
+        "status_summary": packet.get("status_summary", packet.get("ai_context", "")),
         "findings": findings,
         "recommended_actions": actions
     }
