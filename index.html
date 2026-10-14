@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="description" content="Patient sensor readings, seven-day baselines and clinician review.">
+  <title>PulseCare · Patient monitoring</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='9' fill='%232b5a47'/%3E%3Cpath d='M7 16h5l3-6 4 12 3-6h3' fill='none' stroke='white' stroke-width='2'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/assets/dashboard.css">
+  <script src="/assets/dashboard.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to measurements</a>
+  <svg class="icon-library" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
+    <symbol id="i-pulse" viewBox="0 0 24 24"><path d="M2 12h5l3-7 4 14 3-7h5"/></symbol>
+    <symbol id="i-grid" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></symbol>
+    <symbol id="i-baseline" viewBox="0 0 24 24"><path d="M3 18h18M3 6h18M3 12h3l3-3 4 6 4-5 4 2"/></symbol>
+    <symbol id="i-device" viewBox="0 0 24 24"><rect x="6" y="4" width="12" height="16" rx="3"/><path d="M10 8h4M11 17h2M10 1v3M14 1v3M10 20v3M14 20v3"/></symbol>
+    <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20 14a8 8 0 0 1-10-10A8.5 8.5 0 1 0 20 14Z"/></symbol>
+    <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.5 1.5M17.5 17.5 19 19M5 19l1.5-1.5M17.5 6.5 19 5"/></symbol>
+    <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14m-5-5 5 5-5 5"/></symbol>
+    <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+    <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7v1"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol>
+    <symbol id="i-shield" viewBox="0 0 24 24"><path d="m12 3 8 3v6c0 5-8 9-8 9s-8-4-8-9V6Z"/><path d="m8 12 3 3 5-6"/></symbol>
+    <symbol id="i-drop" viewBox="0 0 24 24"><path d="M12 3s-7 7-7 12a7 7 0 0 0 14 0c0-5-7-12-7-12Z"/></symbol>
+    <symbol id="i-temp" viewBox="0 0 24 24"><path d="M9 14.5V5a3 3 0 0 1 6 0v9.5a5 5 0 1 1-6 0ZM12 8v10"/></symbol>
+    <symbol id="i-motion" viewBox="0 0 24 24"><path d="m12 3 9 5-9 5-9-5 9-5ZM3 12l9 5 9-5M3 16l9 5 9-5"/></symbol>
+    <symbol id="i-export" viewBox="0 0 24 24"><path d="M12 3v12m-4-4 4 4 4-4M4 15v5h16v-5"/></symbol>
+    <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m9 5 7 7-7 7"/></symbol>
+  </svg>
+
+  <aside class="sidebar">
+    <a href="#overview" class="brand" aria-label="PulseCare overview"><span class="brand-mark"><svg class="icon"><use href="#i-pulse"/></svg></span>PulseCare<span class="brand-period">.</span></a>
+    <div class="workspace"><span class="workspace-avatar" id="personInitial">P</span><div><strong id="workspaceName">Clinical workspace</strong><span>Patient monitoring</span></div></div>
+    <nav aria-label="Main navigation">
+      <a href="#overview" class="nav-link active" data-page="overview" aria-current="page"><svg class="icon"><use href="#i-grid"/></svg>Patient overview</a>
+      <a href="#baseline" class="nav-link" data-page="baseline"><svg class="icon"><use href="#i-baseline"/></svg>Patient baseline<span class="nav-count">7d</span></a>
+      <a href="#device" class="nav-link" data-page="device"><svg class="icon"><use href="#i-device"/></svg>Device & sensors</a>
+    </nav>
+    <div class="sidebar-bottom">
+      <div class="local-note"><svg class="icon"><use href="#i-shield"/></svg><div><strong>Stays on this computer</strong><span>Patient recordings stay local.</span></div></div>
+      <div class="sidebar-device"><span class="connection-dot" data-connection-dot></span><span id="sidebarConnection">Waiting for device</span><svg class="icon"><use href="#i-chevron"/></svg></div>
+    </div>
+  </aside>
+
+  <div class="application">
+    <header class="topbar"><div class="breadcrumb">Clinical workspace<span>/</span><strong id="pageCrumb">Overview</strong></div><div class="topbar-actions"><span class="today" id="today"></span><button class="icon-button" id="themeToggle" aria-label="Switch to dark mode" title="Switch to dark mode"><svg class="icon"><use href="#i-moon"/></svg></button><span class="user-avatar" title="Clinician workspace" aria-label="Clinician workspace">DR</span></div></header>
+    <main id="main" tabindex="-1">
+      <div class="page-heading"><div><h1 id="pageTitle">Patient overview</h1><p id="pageDescription">Live measurements and patient-specific context for clinical review.</p></div><div class="connection-badge" id="connectionBadge"><span class="connection-dot" data-connection-dot></span><span id="connectionText">Waiting for device</span></div></div>
+      <div class="connection-message" id="connectionMessage" role="status" hidden></div>
+      <div class="alert-banner" id="emergencyAlert" role="alert" hidden></div>
+
+      <section data-view="overview" aria-label="Patient overview">
+        <div class="overview-grid">
+          <section class="signal-panel panel" aria-labelledby="signalsTitle">
+            <div class="panel-heading"><div><h2 id="signalsTitle">Patient measurements</h2><p id="signalFreshness">Waiting for the first measurement</p></div><button class="text-button" id="exportButton"><svg class="icon"><use href="#i-export"/></svg>Export</button></div>
+            <div class="metric-strip" role="tablist" aria-label="Select measurement">
+              <button class="metric-tab" role="tab" aria-selected="false" data-metric="heart_rate" id="tab-heart_rate"><span class="metric-label"><svg class="icon"><use href="#i-pulse"/></svg>Heart rate</span><span class="metric-reading"><strong id="value-heart_rate">—</strong><span>bpm</span></span><span class="metric-note" id="note-heart_rate">Waiting for signal</span></button>
+              <button class="metric-tab" role="tab" aria-selected="false" data-metric="spo2" id="tab-spo2"><span class="metric-label"><svg class="icon"><use href="#i-drop"/></svg>Blood oxygen</span><span class="metric-reading"><strong id="value-spo2">—</strong><span>%</span></span><span class="metric-note" id="note-spo2">Waiting for signal</span></button>
+              <button class="metric-tab" role="tab" aria-selected="false" data-metric="temp_object" id="tab-temp_object"><span class="metric-label"><svg class="icon"><use href="#i-temp"/></svg>Surface temp.</span><span class="metric-reading"><strong id="value-temp_object">—</strong><span>°C</span></span><span class="metric-note" id="note-temp_object">Not connected</span></button>
+              <button class="metric-tab selected" role="tab" aria-selected="true" data-metric="motion_g" id="tab-motion_g"><span class="metric-label"><svg class="icon"><use href="#i-motion"/></svg>Movement</span><span class="metric-reading"><strong id="value-motion_g">—</strong><span>g</span></span><span class="metric-note" id="note-motion_g">Waiting for signal</span></button>
+            </div>
+            <div class="chart-section" role="tabpanel" aria-labelledby="tab-motion_g" id="chartPanel">
+              <div class="chart-toolbar"><div class="chart-caption"><span class="series-dot" id="seriesDot"></span><strong id="chartTitle">Movement</strong><span id="chartUnit">g</span></div><div class="range-control" role="group" aria-label="History period"><button data-range="900" class="active" aria-pressed="true">15 min</button><button data-range="3600" aria-pressed="false">1 hour</button><button data-range="86400" aria-pressed="false">24 hours</button></div></div>
+              <div class="chart" id="mainChart"><svg tabindex="0" aria-describedby="chartKeyboardHelp" id="trendChart" viewBox="0 0 720 260" preserveAspectRatio="none" role="img" aria-label="Measured movement history"></svg><div class="chart-empty" id="chartEmpty"><svg class="icon"><use href="#i-pulse"/></svg><strong>No recorded readings</strong><p>Connect the device to begin recording this signal.</p></div><div class="chart-tooltip" id="chartTooltip" role="status" hidden></div></div>
+              <p class="sr-only" id="chartKeyboardHelp">Use Left and Right arrows to inspect recorded values. Home and End move to the first and last reading.</p><div class="chart-footer"><span><span class="legend-line"></span>Measured signal</span><span id="baselineLegend"><span class="legend-band"></span>Personal range not established</span><span id="chartResolution">Only recorded data</span></div>
+            </div>
+            <div class="signal-context"><svg class="icon"><use href="#i-info"/></svg><p id="signalContext">Movement includes gravity. A resting sensor typically measures around 1g.</p></div>
+          </section>
+
+          <aside class="baseline-preview" aria-labelledby="baselinePreviewTitle">
+            <div class="baseline-visual" aria-hidden="true"><svg viewBox="0 0 240 90"><path class="reference-band" d="M0 28H240V64H0Z"/><path class="reference-middle" d="M0 46H240"/><path class="reference-marker" d="M120 12V80"/><circle cx="120" cy="46" r="5"/><path class="reference-tick" d="M0 83V88M40 83V88M80 83V88M120 83V88M160 83V88M200 83V88M240 83V88"/></svg><span>PATIENT REFERENCE</span></div>
+            <h2 id="baselinePreviewTitle">Establish this patient’s baseline.</h2><p id="baselinePreviewCopy">Record seven days to establish this patient’s usual range. Begin with a patient name or reference.</p>
+            <div class="seven-days" id="overviewDays" aria-label="Seven-day recording coverage"></div>
+            <div class="baseline-progress-text"><strong id="overviewProgress">Not started</strong><span id="overviewCoverage">7 days to learn from</span></div>
+            <button class="button primary" id="openBaseline">Set up patient baseline<svg class="icon"><use href="#i-arrow"/></svg></button>
+            <p class="baseline-footnote"><svg class="icon"><use href="#i-shield"/></svg>Patient-specific. Stored locally.</p>
+          </aside>
+        </div>
+
+        <div class="lower-grid">
+          <section class="observations-panel panel"><div class="panel-heading"><div><h2>Items for clinical review</h2><p>Device alerts and changes from the patient’s reference</p></div><span class="quiet-tag" id="eventCount">0 events</span></div><div id="observationList" class="observation-list"><div class="empty-observations"><span class="empty-observation-icon"><svg class="icon"><use href="#i-clock"/></svg></span><div><strong>No observations recorded yet</strong><p>New device alerts and baseline departures will appear here.</p></div></div></div></section>
+          <section class="hardware-panel panel"><div class="panel-heading"><h2>Connected hardware</h2><a href="#device" class="icon-link" aria-label="View device details"><svg class="icon"><use href="#i-arrow"/></svg></a></div><div id="hardwareSummary" class="hardware-list"></div><div class="hardware-footer"><svg class="icon"><use href="#i-device"/></svg><span id="nodeSummary">ESP32-S3 · awaiting connection</span></div></section>
+        </div>
+        <section class="panel clinician-review" aria-labelledby="reviewTitle">
+          <div class="panel-heading"><div><h2 id="reviewTitle">Clinician review</h2><p>Record a local review note and follow-up decision for this patient.</p></div><span class="quiet-tag" id="reviewStatus">Not reviewed</span></div>
+          <form id="reviewForm"><div class="review-fields"><div><label for="reviewDecision">Review outcome</label><select id="reviewDecision"><option value="reviewed">Reviewed · no follow-up recorded</option><option value="follow_up">Follow-up visit recommended</option><option value="contact">Contact patient for assessment</option></select></div><div class="review-note-field"><label for="reviewNote">Clinical note <span>(optional)</span></label><input id="reviewNote" maxlength="2000" placeholder="Add context for the next review"></div><button class="button" id="saveReview" type="submit">Save review</button></div><p class="field-hint" id="reviewHint">Enroll the patient baseline to associate reviews with the correct patient.</p><p id="reviewError" class="form-error" role="alert" hidden></p></form>
+        </section>
+      </section>
+
+      <section data-view="baseline" hidden aria-label="Patient baseline">
+        <div class="baseline-workspace">
+          <section class="panel enrollment-panel"><div class="panel-heading"><div><h2 id="enrollmentTitle">Enroll a patient baseline</h2><p id="enrollmentDescription">Compare future readings with patterns recorded for one person.</p></div><span class="quiet-tag" id="enrollmentStatus">Not started</span></div>
+            <form id="enrollmentForm"><label for="personName">Patient name or reference</label><div class="form-row"><input id="personName" name="person" maxlength="80" placeholder="e.g. Patient RPM-001" autocomplete="off" required><button class="button primary" type="submit" id="startBaseline">Start 7-day collection<svg class="icon"><use href="#i-arrow"/></svg></button></div><p class="field-hint" id="enrollmentHint">Connect the patient’s device to start collection.</p><p id="enrollmentError" class="form-error" role="alert" hidden></p></form>
+            <div id="enrollmentActive" hidden><div class="enrollment-summary"><span class="person-disc" id="enrolledInitial">P</span><div><strong id="enrolledPerson"></strong><p id="enrolledSince"></p></div><button class="text-button" id="endEnrollment">Change patient</button></div></div>
+            <div class="coverage-heading"><h3>Seven-day coverage</h3><span id="coverageHelp">Each metric learns independently</span></div><div class="coverage-calendar" id="coverageCalendar"></div>
+            <div class="coverage-legend"><span><i class="coverage-key recorded"></i>Recorded</span><span><i class="coverage-key empty"></i>No valid samples</span><span>Minimum 30 sampled minutes per day, per metric</span></div>
+          </section>
+          <section class="method-note"><svg class="icon"><use href="#i-baseline"/></svg><h2>A reference, not a diagnosis.</h2><p>Each signal gets its own typical range after seven days with enough valid recordings. Future readings are compared with that fixed range.</p><ul><li>Missing readings are excluded.</li><li>Short bursts don’t count as full days.</li><li>The absent temperature sensor can join later.</li></ul><details><summary>How comparison works</summary><p>The center is the median of sampled-minute averages. The range uses median absolute deviation with a small engineering noise floor. Three consecutive departures create an observation. This is a prototype statistical model, not a validated health assessment.</p></details></section>
+        </div>
+        <section class="panel reference-panel"><div class="panel-heading"><div><h2>Patient reference ranges</h2><p>Each measurement becomes comparable when its own baseline is ready.</p></div></div><div class="table-scroll"><table><thead><tr><th>Measurement</th><th>Coverage</th><th>Personal range</th><th>Latest reading</th><th>Comparison</th></tr></thead><tbody id="referenceTable"></tbody></table></div></section>
+      </section>
+
+      <section data-view="device" hidden aria-label="Device and sensors"><div class="device-layout"><section class="panel"><div class="panel-heading"><div><h2>ESP32-S3</h2><p id="deviceIdentity">Waiting for device identity</p></div><svg class="icon device-large-icon"><use href="#i-device"/></svg></div><dl class="device-facts" id="deviceFacts"></dl><div class="device-help"><svg class="icon"><use href="#i-info"/></svg><p>Leave the local bridge running to keep recording, even when this browser is closed. Only one application can read the USB serial port at a time.</p></div></section><section class="panel"><div class="panel-heading"><div><h2>Sensor inventory</h2><p>Connectivity and measurement availability are different.</p></div></div><div class="sensor-inventory" id="sensorInventory"></div></section></div><section class="temperature-note"><svg class="icon"><use href="#i-temp"/></svg><div><h2>Temperature channel · ready for integration</h2><p>The MLX90614 channel remains ready for the fourth measurement. When connected, real surface-temperature readings will appear automatically and begin building their own reference. No temperature is estimated from the other sensors.</p></div></section></section>
+      <footer class="page-footer"><span><svg class="icon"><use href="#i-shield"/></svg>Local by design</span><p>University prototype · sensor changes support clinician review, not a diagnosis.</p><span id="packetCounter">0 packets received</span></footer>
+    </main>
+  </div>
+  <div class="toast" id="toast" role="status" hidden></div>
+</body>
+</html>

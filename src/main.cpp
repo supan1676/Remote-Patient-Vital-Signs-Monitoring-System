@@ -10,8 +10,8 @@
  *   - Pushbutton (GPIO 5 to GND, Active LOW)
  * 
  * Features:
- *   - Real optical pulse beat detection (PBA algorithm via heartRate.h)
- *   - Dynamic AC/DC blood oxygen (SpO2) ratio computation
+ *   - FIFO-based optical pulse estimation (Maxim algorithm validity flags)
+ *   - Four-second paired red/IR windows for estimated SpO2
  *   - 2-Stage physical fall detection (free-fall dip followed by impact spike)
  *   - Interactive SOS alert button with press-to-cancel capability
  *   - 1 Hz telemetry stream in human card and compact JSON formats
@@ -28,8 +28,7 @@
 #include <Adafruit_MPU6050.h>
 #include <Adafruit_Sensor.h>
 #include <MAX30105.h>
-#include <heartRate.h>
-#include <ArduinoJson.h>
+#include <spo2_algorithm.h>
 
 // Primary I2C Bus 0 (OLED, MLX90614, MAX30102)
 #define I2C_SDA_PIN     8
@@ -66,13 +65,12 @@ bool fingerDetected = false;
 long lastIR = 0;
 long lastRed = 0;
 
-float objTempC = -1.0f;
-float coreTempC = -1.0f;
-float ambTempC = -1.0f;
+float objTempC = NAN;
+float ambTempC = NAN;
 
 int stepCount = 0;
 float lastMag = 1.0f;
-float currentMotionG = 1.0f;
+float currentMotionG = NAN;
 unsigned long lastStepTime = 0;
 
 // Alerts & Non-blocking timers
@@ -82,15 +80,65 @@ bool fallActive = false;
 unsigned long fallClearTime = 0;
 unsigned long freeFallTime = 0; // Timestamp of free-fall dip for 2-stage fall detection
 
-// Real Optical Pulse & Beat Tracking (Maxim / SparkFun PBA Algorithm)
-#define BPM_BUFFER_SIZE 4
-uint8_t rates[BPM_BUFFER_SIZE] = {0, 0, 0, 0};
-uint8_t rateSpot = 0;
-long lastBeatTime = 0;
+// Maxim algorithm requires 25 FIFO samples/sec: 100 Hz with averaging of 4.
+uint32_t irSamples[100], redSamples[100];
+uint16_t sampleCount = 0;
+unsigned long lastOpticalSample = 0;
 
-// Dynamic AC/DC SpO2 tracking over pulse windows
-long irMin = 0x7FFFFFFF, irMax = 0;
-long redMin = 0x7FFFFFFF, redMax = 0;
+void resetOptical() {
+    currentBpm = currentSpO2 = 0;
+    fingerDetected = false;
+    sampleCount = 0;
+}
+
+bool sensorResponds(TwoWire &bus, uint8_t address) {
+    bus.beginTransmission(address);
+    return bus.endTransmission() == 0;
+}
+
+void printMeasurement(float value, uint8_t decimals = 2) {
+    if (isfinite(value)) Serial.print(value, decimals);
+    else Serial.print(F("null"));
+}
+
+void sampleOptical() {
+    if (!maxOK) return;
+    unsigned long now = millis();
+    // The library's small software ring cannot retain a long backlog.
+    if (lastOpticalSample && now - lastOpticalSample > 150) {
+        resetOptical();
+        max30102.clearFIFO();
+        lastOpticalSample = now;
+    }
+    if (!sensorResponds(Wire, 0x57)) {
+        maxOK = false; resetOptical(); lastOpticalSample = 0; return;
+    }
+    max30102.check();
+    while (max30102.available()) {
+        lastIR = max30102.getFIFOIR();
+        lastRed = max30102.getFIFORed();
+        max30102.nextSample();
+        lastOpticalSample = now;
+        if (lastIR < 50000 || lastIR >= 262143 || lastRed >= 262143) {
+            resetOptical();
+            continue;
+        }
+        fingerDetected = true;
+        irSamples[sampleCount] = lastIR;
+        redSamples[sampleCount++] = lastRed;
+        if (sampleCount == 100) {
+            int32_t bpm, spo2;
+            int8_t bpmValid, spo2Valid;
+            maxim_heart_rate_and_oxygen_saturation(irSamples, 100, redSamples,
+                &spo2, &spo2Valid, &bpm, &bpmValid);
+            currentBpm = bpmValid && bpm >= 40 && bpm <= 220 ? bpm : 0;
+            currentSpO2 = spo2Valid && spo2 > 0 && spo2 <= 100 ? spo2 : 0;
+            memmove(irSamples, irSamples + 25, 75 * sizeof(uint32_t));
+            memmove(redSamples, redSamples + 25, 75 * sizeof(uint32_t));
+            sampleCount = 75;
+        }
+    }
+}
 
 // Loop timers
 unsigned long lastReportTime = 0;
@@ -184,8 +232,8 @@ bool mpuRawInit(uint8_t addr) {
     if (whoami < 16) Serial.print(F("0"));
     Serial.println(whoami, HEX);
 
-    if (whoami == 0xFF || whoami == 0x00) {
-        Serial.println(F("    [RAW DIAG] Chip not responding to register reads."));
+    if (whoami != 0x68 && whoami != 0x70) {
+        Serial.println(F("    [RAW DIAG] Unsupported IMU identity; refusing to assume its register layout."));
         return false;
     }
 
@@ -202,20 +250,20 @@ bool mpuRawInit(uint8_t addr) {
     if (pwr < 16) Serial.print(F("0"));
     Serial.println(pwr, HEX);
 
-    if (pwr & 0x40) {
+    if ((pwr & 0x40) || mpuReadRegister(addr, MPU_REG_ACCEL_CFG) != 0x10) {
         Serial.println(F("    [RAW DIAG] SLEEP bit still set — chip may be damaged."));
         return false;
     }
 
-    Serial.println(F("    [RAW DIAG] MPU-6050 clone initialized via raw registers on Bus 1!"));
+    Serial.println(F("    [RAW DIAG] Compatible MPU (WHO_AM_I 0x68/0x70) initialized via checked registers on Bus 1!"));
     return true;
 }
 
-void mpuRawReadAccel(uint8_t addr, float &ax, float &ay, float &az) {
+bool mpuRawReadAccel(uint8_t addr, float &ax, float &ay, float &az) {
     Wire1.beginTransmission(addr);
     Wire1.write(MPU_REG_ACCEL_XOUT);
-    Wire1.endTransmission(false);
-    Wire1.requestFrom(addr, (uint8_t)6);
+    if (Wire1.endTransmission(false) != 0) return false;
+    if (Wire1.requestFrom(addr, (uint8_t)6) != 6) return false;
 
     if (Wire1.available() >= 6) {
         // Read MSB and LSB into explicit separate variables to guarantee byte order in C++
@@ -234,10 +282,9 @@ void mpuRawReadAccel(uint8_t addr, float &ax, float &ay, float &az) {
         ax = rawX / 4096.0f;
         ay = rawY / 4096.0f;
         az = rawZ / 4096.0f;
-    } else {
-        ax = ay = 0.0f;
-        az = 1.0f; // Default to 1g (gravity)
+        return true;
     }
+    return false;
 }
 
 // ---------------------------------------------------------------------------
@@ -247,8 +294,8 @@ void outputTelemetry(bool urgent = false) {
     unsigned long now = millis();
 
     // 1. Calculate status classification based on vital sign thresholds
-    const char* riskLevel = "NORMAL";
-    const char* clinicalSummary = "All vital signs within expected baseline.";
+    const char* riskLevel = "UNKNOWN";
+    const char* clinicalSummary = "Waiting for valid optical readings; unavailable measurements are null.";
 
     if (sosActive) {
         riskLevel = "EMERGENCY";
@@ -265,12 +312,9 @@ void outputTelemetry(bool urgent = false) {
     } else if (fingerDetected && currentBpm > 0 && currentBpm < 50) {
         riskLevel = "WARNING";
         clinicalSummary = "LOW HEART RATE: Pulse below 50 BPM. Check on patient.";
-    } else if (coreTempC >= 38.0f) {
-        riskLevel = "WARNING";
-        clinicalSummary = "HIGH TEMPERATURE: Elevated temp (>38.0 C). Vitals abnormal — notify caregiver.";
-    } else if (coreTempC > 0 && coreTempC < 35.0f) {
-        riskLevel = "WARNING";
-        clinicalSummary = "LOW TEMPERATURE: Below expected range (<35.0 C). Check sensor placement.";
+    } else if (currentBpm > 0 && currentSpO2 > 0) {
+        riskLevel = "NORMAL";
+        clinicalSummary = "No configured optical alert threshold crossed. Temperature is object/surface, not core.";
     }
 
     int activeSensors = (oledOK ? 1 : 0) + (mpuOK ? 1 : 0) + (mlxOK ? 1 : 0) + (maxOK ? 1 : 0);
@@ -279,6 +323,8 @@ void outputTelemetry(bool urgent = false) {
     Serial.print(F("[JSON] {"));
     Serial.print(F("\"uptime_s\":")); Serial.print(now / 1000);
     Serial.print(F(",\"device_id\":\"RPM-NODE-01\""));
+    Serial.print(F(",\"schema_version\":2"));
+    Serial.printf(",\"board\":{\"flash_bytes\":%u,\"psram_bytes\":%u}", ESP.getFlashChipSize(), ESP.getPsramSize());
     Serial.print(F(",\"risk\":\"")); Serial.print(riskLevel); Serial.print(F("\""));
     Serial.print(F(",\"urgent\":")); Serial.print(urgent ? F("true") : F("false"));
     Serial.print(F(",\"sensors\":{"));
@@ -290,25 +336,29 @@ void outputTelemetry(bool urgent = false) {
     Serial.print(F("}"));
 
     Serial.print(F(",\"vitals\":{"));
-    Serial.print(F("\"heart_rate\":")); Serial.print(fingerDetected ? currentBpm : 0);
-    Serial.print(F(",\"spo2\":")); Serial.print(fingerDetected ? currentSpO2 : 0);
+    Serial.print(F("\"heart_rate\":")); printMeasurement(fingerDetected && currentBpm > 0 ? currentBpm : NAN, 0);
+    Serial.print(F(",\"spo2\":")); printMeasurement(fingerDetected && currentSpO2 > 0 ? currentSpO2 : NAN, 0);
     Serial.print(F(",\"finger_on\":")); Serial.print(fingerDetected ? F("true") : F("false"));
-    Serial.print(F(",\"raw_ir\":")); Serial.print(fingerDetected ? lastIR : 0);
-    Serial.print(F(",\"temp_core\":")); Serial.print(coreTempC > 0 ? coreTempC : 0.0f, 1);
-    Serial.print(F(",\"temp_skin\":")); Serial.print(objTempC > 0 ? objTempC : 0.0f, 1);
-    Serial.print(F(",\"temp_amb\":")); Serial.print(ambTempC > 0 ? ambTempC : 0.0f, 1);
-    Serial.print(F(",\"steps\":")); Serial.print(stepCount);
-    Serial.print(F(",\"motion_g\":")); Serial.print(currentMotionG, 2);
+    Serial.print(F(",\"raw_ir\":")); printMeasurement(maxOK && lastOpticalSample ? lastIR : NAN, 0);
+    Serial.print(F(",\"raw_red\":")); printMeasurement(maxOK && lastOpticalSample ? lastRed : NAN, 0);
+    Serial.print(F(",\"temp_core\":")); Serial.print(F("null")); // No core temperature sensor or calibrated model.
+    Serial.print(F(",\"temp_skin\":")); printMeasurement(objTempC);
+    Serial.print(F(",\"temp_object\":")); printMeasurement(objTempC);
+    Serial.print(F(",\"temp_amb\":")); printMeasurement(ambTempC);
+    Serial.print(F(",\"steps\":")); printMeasurement(mpuOK && isfinite(currentMotionG) ? stepCount : NAN, 0);
+    Serial.print(F(",\"motion_g\":")); printMeasurement(currentMotionG);
     Serial.print(F("}"));
 
     Serial.print(F(",\"alerts\":{"));
     Serial.print(F("\"sos\":")); Serial.print(sosActive ? F("true") : F("false"));
-    Serial.print(F("\"fall\":")); Serial.print(fallActive ? F("true") : F("false"));
+    Serial.print(F(",\"fall\":")); Serial.print(fallActive ? F("true") : F("false"));
     Serial.print(F("}"));
 
     Serial.print(F(",\"status_summary\":\"")); Serial.print(clinicalSummary); Serial.print(F("\""));
     Serial.println(F("}"));
 
+    // Verbose cards are opt-in: long UART writes can interrupt FIFO sampling.
+#if RPM_VERBOSE_TELEMETRY
     // 3. Clean Formatted Terminal Monitoring Card
     Serial.println(F("=============================================================="));
     Serial.print(F(" [RPM PATIENT TELEMETRY | Up: "));
@@ -333,9 +383,9 @@ void outputTelemetry(bool urgent = false) {
 
     // Body & Ambient Temperature
     Serial.print(F("  [MLX90614 IR]   : "));
-    if (coreTempC > 0) {
-        Serial.print(coreTempC, 1);
-        Serial.print(F(" °C (Estimated Core) | Skin: "));
+    if (isfinite(objTempC)) {
+        Serial.print(objTempC, 1);
+        Serial.print(F(" °C (Object/Surface) | Surface: "));
         Serial.print(objTempC, 1);
         Serial.print(F(" °C | Ambient: "));
         Serial.print(ambTempC, 1);
@@ -360,6 +410,7 @@ void outputTelemetry(bool urgent = false) {
     Serial.print(F("  [PERIPHERALS]   : SOS Button="));
     Serial.println(sosActive ? F("ACTIVE [PRESSED!]") : F("IDLE"));
     Serial.println(F("==============================================================\n"));
+#endif
 }
 
 // ---------------------------------------------------------------------------
@@ -424,8 +475,8 @@ void updateOLED() {
     // Temperature & Steps
     display.setCursor(0, 26);
     display.print(F("Temp: "));
-    if (coreTempC > 0) {
-        display.print(coreTempC, 1);
+    if (isfinite(objTempC)) {
+        display.print(objTempC, 1);
         display.print(F("C"));
     } else {
         display.print(F("--.-"));
@@ -433,12 +484,14 @@ void updateOLED() {
 
     display.setCursor(68, 26);
     display.print(F("Steps: "));
-    display.print(stepCount);
+    if (mpuOK && isfinite(currentMotionG)) display.print(stepCount);
+    else display.print(F("--"));
 
     // Motion & SOS Status
     display.setCursor(0, 39);
     display.print(F("Motion: "));
-    display.print(currentMotionG, 1);
+    if (isfinite(currentMotionG)) display.print(currentMotionG, 1);
+    else display.print(F("--"));
     display.print(F("g"));
 
     display.setCursor(68, 39);
@@ -454,7 +507,8 @@ void updateOLED() {
 
     display.setCursor(46, 55);
     if (!fingerDetected) display.print(F("Attach Finger"));
-    else display.print(F("Live Vitals OK"));
+    else if (currentBpm > 0 && currentSpO2 > 0) display.print(F("PPG Ready"));
+    else display.print(F("Measuring..."));
 
     display.display();
     Wire.setClock(50000); // Re-assert 50 kHz for MLX90614 SMBus safety
@@ -523,7 +577,10 @@ void updateSensorsHotplug(unsigned long now) {
     if (!maxOK) {
         if (max30102.begin(Wire, I2C_SPEED_STANDARD)) {
             maxOK = true;
-            max30102.setup(0x1F, 4, 2, 400, 411, 4096);
+            max30102.setup(0x24, 4, 2, 100, 411, 4096);
+            Wire.setClock(50000);
+            resetOptical();
+            lastOpticalSample = 0;
             max30102.setPulseAmplitudeRed(0x24);
             max30102.setPulseAmplitudeIR(0x24);
             Serial.println(F(">>> [HOT-PLUG] MAX30102 Pulse Oximeter connected at 0x57! <<<"));
@@ -565,10 +622,10 @@ void setup() {
         Serial.println(F("[ALERT] Button PRESSED during boot (LOW)"));
     }
 
-    // 5. Scan I2C Bus for connected devices
+    // 6. Scan I2C Bus for connected devices
     scanI2CBus();
 
-    // 6. Initialize OLED Display (0x3C)
+    // 7. Initialize OLED Display (0x3C)
     Serial.print(F("\n[2] Initializing Sensors:\n    - OLED Display (0x3C)... "));
     Wire.beginTransmission(0x3C);
     if (Wire.endTransmission() == 0) {
@@ -596,7 +653,7 @@ void setup() {
         Serial.println(F("[OFFLINE] (No physical response at 0x3C)"));
     }
 
-    // 7. Initialize MPU-6050 IMU on Wire1 (tries both 0x68 and 0x69)
+    // 8. Initialize MPU-6050 IMU on Wire1 (tries both 0x68 and 0x69)
     Serial.print(F("    - MPU-6050 6-Axis IMU on GPIO 17/18 (0x68 / 0x69)... "));
     uint8_t mpuFound = 0;
     Wire1.beginTransmission(0x68);
@@ -635,7 +692,7 @@ void setup() {
         Serial.println(F("[OFFLINE] (No I2C ACK on GPIO 17/18 — Check SDA=17, SCL=18, AD0 to GND)"));
     }
 
-    // 8. Initialize MLX90614 Contactless IR Thermometer (0x5A)
+    // 9. Initialize MLX90614 Contactless IR Thermometer (0x5A)
     Serial.print(F("    - MLX90614 IR Thermometer (0x5A)... "));
     Wire.setClock(50000);
     if (mlx.begin(0x5A, &Wire)) {
@@ -645,11 +702,14 @@ void setup() {
         Serial.println(F("[OFFLINE] (Check 3.3V power, GND, SCL=9, SDA=8)"));
     }
 
-    // 9. Initialize TECHTONICS MAX30102 Pulse Oximeter (0x57)
+    // 10. Initialize TECHTONICS MAX30102 Pulse Oximeter (0x57)
     Serial.print(F("    - MAX30102 Pulse Oximeter (0x57)... "));
     if (max30102.begin(Wire, I2C_SPEED_STANDARD)) {
         maxOK = true;
-        max30102.setup(0x1F, 4, 2, 400, 411, 4096);
+        max30102.setup(0x24, 4, 2, 100, 411, 4096);
+            Wire.setClock(50000);
+            resetOptical();
+            lastOpticalSample = 0;
         max30102.setPulseAmplitudeRed(0x24);
         max30102.setPulseAmplitudeIR(0x24);
         Serial.println(F("[ONLINE]"));
@@ -662,6 +722,8 @@ void setup() {
     Serial.println(F(" Press the SOS Button on GPIO 5 anytime to trigger Emergency Telemetry!"));
     Serial.println(F("==============================================================\n"));
 
+    Serial.printf("[BOARD] Chip=%s Flash=%u PSRAM=%u bytes\n", ESP.getChipModel(), ESP.getFlashChipSize(), ESP.getPsramSize());
+
     // Initial output
     outputTelemetry();
 }
@@ -670,9 +732,8 @@ void setup() {
 // Main Application Loop
 // ---------------------------------------------------------------------------
 void loop() {
+    // 1. Capture Current Timestamp
     unsigned long now = millis();
-
-
 
     // 2. Clear Temporary Alert States
     if (sosActive && now >= sosClearTime) sosActive = false;
@@ -712,25 +773,15 @@ void loop() {
             float ax, ay, az;
             bool gotData = false;
 
-            if (mpuRawMode) {
-                mpuRawReadAccel(mpuAddress, ax, ay, az);
-                gotData = true;
-            } else {
-                sensors_event_t a, g, temp;
-                if (mpu.getEvent(&a, &g, &temp)) {
-                    ax = a.acceleration.x / 9.80665f;
-                    ay = a.acceleration.y / 9.80665f;
-                    az = a.acceleration.z / 9.80665f;
-                    gotData = true;
-                }
-            }
+            gotData = mpuRawReadAccel(mpuAddress, ax, ay, az);
+            if (!gotData) { mpuOK = false; currentMotionG = NAN; freeFallTime = 0; lastMag = 1.0f; }
 
             if (gotData) {
                 currentMotionG = sqrt(ax * ax + ay * ay + az * az);
 
                 // Step Detection Algorithm
                 float delta = abs(currentMotionG - 1.0f);
-                if (delta > 0.28f && lastMag <= 0.28f && (now - lastStepTime > 380)) {
+                if (delta > 0.40f && lastMag <= 0.40f && (now - lastStepTime > 380)) {
                     stepCount++;
                     lastStepTime = now;
                 }
@@ -759,83 +810,10 @@ void loop() {
             }
         }
 
-        // Read MAX30102 Optical PPG Data (Real Pulse & Dynamic AC/DC SpO2)
-        if (maxOK) {
-            lastIR = max30102.getIR();
-            lastRed = max30102.getRed();
-
-            if (lastIR > 50000) { // Finger physically present on sensor
-                fingerDetected = true;
-
-                // Track signal envelope for dynamic AC/DC ratio calculation
-                if (lastIR < irMin) irMin = lastIR;
-                if (lastIR > irMax) irMax = lastIR;
-                if (lastRed < redMin) redMin = lastRed;
-                if (lastRed > redMax) redMax = lastRed;
-
-                // 1. Real Heart Beat Detection (Maxim PBA algorithm via heartRate.h)
-                if (checkForBeat(lastIR)) {
-                    long delta = now - lastBeatTime;
-                    lastBeatTime = now;
-
-                    // Valid physiological heart rate range: 40 BPM (1500ms) to 220 BPM (272ms)
-                    if (delta > 270 && delta < 1500) {
-                        float instantBpm = 60.0f / (delta / 1000.0f);
-
-                        if (instantBpm >= 40.0f && instantBpm <= 220.0f) {
-                            rates[rateSpot++] = (uint8_t)instantBpm;
-                            rateSpot %= BPM_BUFFER_SIZE;
-
-                            int sum = 0;
-                            int count = 0;
-                            for (int i = 0; i < BPM_BUFFER_SIZE; i++) {
-                                if (rates[i] > 0) {
-                                    sum += rates[i];
-                                    count++;
-                                }
-                            }
-                            if (count > 0) {
-                                currentBpm = sum / count;
-                            }
-                        }
-                    }
-
-                    // 2. Real SpO2 Calculation from pulsatile AC and baseline DC components
-                    long acIR = irMax - irMin;
-                    long dcIR = (irMax + irMin) / 2;
-                    long acRed = redMax - redMin;
-                    long dcRed = (redMax + redMin) / 2;
-
-                    // Reset tracking window for the next arterial pulse wave
-                    irMin = 0x7FFFFFFF; irMax = 0;
-                    redMin = 0x7FFFFFFF; redMax = 0;
-
-                    if (acIR > 25 && dcIR > 10000 && acRed > 25 && dcRed > 10000) {
-                        float ratio = ((float)acRed / (float)dcRed) / ((float)acIR / (float)dcIR);
-                        // Standard empirical calibration curve: SpO2 = 110 - 25 * R
-                        int calculatedSpO2 = (int)(110.0f - 25.0f * ratio);
-                        if (calculatedSpO2 >= 80 && calculatedSpO2 <= 100) {
-                            currentSpO2 = calculatedSpO2;
-                        }
-                    }
-                }
-
-                // If finger is on sensor but no pulse detected for 3.5s, reset BPM to 0
-                if (lastBeatTime > 0 && (now - lastBeatTime > 3500)) {
-                    currentBpm = 0;
-                }
-            } else {
-                // Finger removed: reset all vitals and tracking buffers immediately
-                fingerDetected = false;
-                currentBpm = 0;
-                currentSpO2 = 0;
-                lastBeatTime = 0;
-                irMin = 0x7FFFFFFF; irMax = 0;
-                redMin = 0x7FFFFFFF; redMax = 0;
-                for (int i = 0; i < BPM_BUFFER_SIZE; i++) rates[i] = 0;
-            }
-        }
     }
+
+    // Drain paired red/IR FIFO samples every loop, without waiting for new data.
+    sampleOptical();
 
     // 5. 1-Second Periodic Telemetry & Visual Dashboard Refresh
     if (now - lastReportTime >= 1000) {
@@ -844,30 +822,23 @@ void loop() {
         // Dynamic hot-plug discovery for any disconnected sensors
         updateSensorsHotplug(now);
 
-        // Read MLX90614 Infrared Temperature
+        // Recheck connected sensors; never retain a value after a failed read.
         Wire.setClock(50000);
-        if (mlxOK) {
+        oledOK = oledOK && sensorResponds(Wire, 0x3C);
+        if (maxOK && !sensorResponds(Wire, 0x57)) {
+            maxOK = false;
+            resetOptical();
+            lastOpticalSample = 0;
+        }
+        objTempC = ambTempC = NAN;
+        if (mlxOK && sensorResponds(Wire, 0x5A)) {
             float rawO = mlx.readObjectTempC();
             float rawA = mlx.readAmbientTempC();
-
-            if (!isnan(rawO) && rawO > -40.0f && rawO < 125.0f) {
-                objTempC = rawO;
-                // Core Body Estimation: if surface is skin-like (>= 28 C), add +3.0 C offset
-                if (objTempC >= 28.0f) {
-                    coreTempC = objTempC + 3.0f;
-                } else {
-                    coreTempC = objTempC;
-                }
-            } else {
-                objTempC = -1.0f;
-                coreTempC = -1.0f;
-            }
-
-            if (!isnan(rawA) && rawA > -40.0f && rawA < 125.0f) {
-                ambTempC = rawA;
-            } else {
-                ambTempC = -1.0f;
-            }
+            if (isfinite(rawO) && rawO >= -70 && rawO <= 380) objTempC = rawO;
+            if (isfinite(rawA) && rawA >= -40 && rawA <= 125) ambTempC = rawA;
+            if (!isfinite(objTempC) || !isfinite(ambTempC)) mlxOK = false;
+        } else {
+            mlxOK = false;
         }
 
         // Output Telemetry to Serial (Human + JSON)

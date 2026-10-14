@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 IoMT Patient Vitals Monitor & Threshold Alert Engine
-Connects directly to the ESP32-S3 live serial stream (COM6) or simulated stream,
+Connects directly to the ESP32-S3 live serial stream,
 parses JSON telemetry packets, and checks vitals against baseline thresholds
 to alert caregivers of abnormal readings or emergency events.
 """
@@ -10,116 +10,52 @@ import sys
 import json
 import time
 from datetime import datetime
-
-try:
-    import serial
-except ImportError:
-    serial = None
+from telemetry_bridge import serial, find_serial_port, parse_packet
 
 
 def evaluate_clinical_status(packet):
-    """
-    Checks patient vitals against baseline safety thresholds
-    and generates clear alert notices for caregivers.
-    """
-    vitals = packet.get("vitals", {})
-    alerts = packet.get("alerts", {})
+    """Summarize measured fields without inventing missing readings or core temperature."""
+    v = packet.get("vitals", {})
     sensors = packet.get("sensors", {})
-    uptime = packet.get("uptime_s", 0)
-
-    hr = vitals.get("heart_rate", 0)
-    spo2 = vitals.get("spo2", 0)
-    temp_core = vitals.get("temp_core", 0.0)
-    finger_on = vitals.get("finger_on", False)
-    motion_g = vitals.get("motion_g", 1.0)
-    steps = vitals.get("steps", 0)
-    sos = alerts.get("sos", False)
-    fall = alerts.get("fall", False)
-
-    findings = []
-    actions = []
-    risk_level = "GREEN (NORMAL)"
-
-    # 1. Emergency Alerts
-    if sos:
-        risk_level = "RED (EMERGENCY)"
-        findings.append("🚨 SOS Button pressed by patient.")
-        actions.append("Check on patient immediately.")
-
-    if fall:
-        risk_level = "RED (EMERGENCY)"
-        findings.append(f"💥 High impact movement detected ({motion_g:.2f} g).")
-        actions.append("Check on patient immediately for possible fall.")
-
-    # 2. Oxygen Saturation (SpO2)
-    if finger_on:
-        if spo2 < 88 and spo2 > 0:
-            risk_level = "RED (EMERGENCY)"
-            findings.append(f"🫁 SpO2 reading very low: {spo2}%.")
-            actions.append("Vitals look abnormal — notify a caregiver or nurse immediately.")
-        elif spo2 < 92 and spo2 > 0:
-            if risk_level != "RED (EMERGENCY)":
-                risk_level = "YELLOW (WARNING)"
-            findings.append(f"🫁 SpO2 reading below target: {spo2}%.")
-            actions.append("Recheck sensor placement; notify caregiver if reading stays low.")
-
-    # 3. Heart Rate
-    if finger_on:
-        if hr > 130:
-            risk_level = "RED (EMERGENCY)"
-            findings.append(f"❤️ Pulse rate very high: {hr} BPM.")
-            actions.append("Vitals look abnormal — notify a caregiver.")
-        elif hr > 100:
-            if risk_level != "RED (EMERGENCY)":
-                risk_level = "YELLOW (WARNING)"
-            findings.append(f"❤️ Pulse rate elevated: {hr} BPM.")
-            actions.append("Check on patient; recheck vitals after resting.")
-        elif hr < 45 and hr > 0:
-            risk_level = "RED (EMERGENCY)"
-            findings.append(f"❤️ Pulse rate very low: {hr} BPM.")
-            actions.append("Vitals look abnormal — notify a caregiver.")
-
-    # 4. Core Body Temperature
-    if temp_core >= 39.0:
-        risk_level = "RED (EMERGENCY)"
-        findings.append(f"🌡️ High temperature reading: {temp_core:.1f} °C.")
-        actions.append("Vitals look abnormal — notify a caregiver.")
-    elif temp_core >= 38.0:
-        if risk_level != "RED (EMERGENCY)":
-            risk_level = "YELLOW (WARNING)"
-        findings.append(f"🌡️ Temperature elevated: {temp_core:.1f} °C.")
-        actions.append("Monitor patient comfort; notify caregiver if fever persists.")
-    elif temp_core > 0 and temp_core < 35.0:
-        if risk_level != "RED (EMERGENCY)":
-            risk_level = "YELLOW (WARNING)"
-        findings.append(f"❄️ Temperature reading low: {temp_core:.1f} °C.")
-        actions.append("Check sensor placement; ensure patient is warm.")
-
-    # 5. Fallback if all is normal
-    if not findings:
-        findings.append("All measured vital signs are within normal baseline thresholds.")
-        actions.append("Continue routine monitoring.")
-
-    # Construct the Structured Alert Summary Object
-    alert_summary = {
+    alerts = packet.get("alerts", {})
+    finger = sensors.get("max") is True and v.get("finger_on") is True
+    hr = v.get("heart_rate") if finger else None
+    spo2 = v.get("spo2") if finger else None
+    motion = v.get("motion_g") if sensors.get("mpu") is True else None
+    surface = v.get("temp_object", v.get("temp_skin")) if sensors.get("mlx") is True else None
+    findings, actions = [], []
+    status = "UNKNOWN (MISSING DATA)"
+    if alerts.get("sos") or alerts.get("fall"):
+        status = "RED (EMERGENCY)"
+        findings.append("SOS button active." if alerts.get("sos") else "Fall alert active.")
+        actions.append("Check on the person immediately.")
+    elif (hr is not None and hr > 0 and (hr < 50 or hr > 120)) or (spo2 is not None and 0 < spo2 < 90):
+        status = "YELLOW (WARNING)"
+        findings.append("A configured optical measurement threshold was crossed.")
+        actions.append("Check sensor placement and notify a caregiver if the reading persists.")
+    elif hr is not None and hr > 0 and spo2 is not None and spo2 > 0:
+        status = "GREEN (NO OPTICAL ALERT)"
+        findings.append("No configured optical alert threshold crossed.")
+    if hr is None or hr <= 0 or spo2 is None or spo2 <= 0:
+        findings.append("Optical readings unavailable; keep a finger steady on MAX30102.")
+    findings.append("MLX90614 measures object/surface temperature; core temperature is unavailable.")
+    return {
         "timestamp": datetime.now().isoformat(),
-        "uptime_seconds": uptime,
-        "overall_status": risk_level,
+        "uptime_seconds": packet.get("uptime_s"),
+        "overall_status": status,
         "patient_metrics": {
-            "heart_rate_bpm": hr if finger_on else "UNATTACHED",
-            "spo2_percent": spo2 if finger_on else "UNATTACHED",
-            "raw_ir": vitals.get("raw_ir", 0) if finger_on else "UNATTACHED",
-            "core_temp_c": temp_core if temp_core > 0 else "PENDING",
-            "step_count": steps,
-            "motion_g": round(motion_g, 2),
-            "hardware_health": f"{sensors.get('active', 0)}/4 sensors online"
+            "heart_rate_bpm": hr if hr is not None and hr > 0 else "UNAVAILABLE",
+            "spo2_percent": spo2 if spo2 is not None and spo2 > 0 else "UNAVAILABLE",
+            "raw_ir": v.get("raw_ir"),
+            "core_temp_c": "NOT MEASURED",
+            "surface_temp_c": surface if surface is not None else "UNAVAILABLE",
+            "step_count": v.get("steps") if sensors.get("mpu") else "UNAVAILABLE",
+            "motion_g": round(motion, 2) if motion is not None else "UNAVAILABLE",
+            "hardware_health": f"{sum(sensors.get(k) is True for k in ('oled', 'max', 'mlx', 'mpu'))}/4 sensors online"
         },
-        "status_summary": packet.get("status_summary", packet.get("ai_context", "")),
-        "findings": findings,
-        "recommended_actions": actions
+        "status_summary": packet.get("status_summary", ""),
+        "findings": findings, "recommended_actions": actions
     }
-
-    return alert_summary
 
 
 def print_alert_card(summary):
@@ -136,7 +72,7 @@ def print_alert_card(summary):
     print(f"  Vitals Snapshot:")
     print(f"    • Heart Rate  : {metrics['heart_rate_bpm']} BPM")
     print(f"    • SpO2 (O2)   : {metrics['spo2_percent']} %")
-    print(f"    • Body Temp   : {metrics['core_temp_c']} °C")
+    print(f"    • Surface Temp: {metrics['surface_temp_c']} °C")
     print(f"    • Step Count  : {metrics['step_count']} steps | Motion: {metrics['motion_g']} g")
     print("-" * 65)
     print("  📋 Threshold Observations:")
@@ -148,15 +84,23 @@ def print_alert_card(summary):
     print("=" * 65 + "\n")
 
 
-def listen_serial(port="COM6", baud=115200):
+def listen_serial(port=None, baud=115200):
     """Listens to the ESP32 serial stream and checks every JSON telemetry packet."""
+    if port is None:
+        port = find_serial_port()
+    if port is None:
+        print("[ERROR] No unique USB serial device found. Pass its port explicitly.")
+        return
     if serial is None:
         print("[ERROR] pyserial is not installed. Install via: pip install pyserial")
         return
 
     print(f"[INFO] Connecting to ESP32-S3 on {port} at {baud} baud...")
     try:
-        ser = serial.Serial(port, baud, timeout=1.0)
+        ser = serial.Serial(port=None, baudrate=baud, timeout=1.0)
+        ser.dtr = ser.rts = False
+        ser.port = port
+        ser.open()
         time.sleep(1.0)
         print("[SUCCESS] Connected! Listening for real-time telemetry stream...\n")
     except Exception as e:
@@ -174,7 +118,9 @@ def listen_serial(port="COM6", baud=115200):
             if line.startswith("[JSON]"):
                 json_str = line[6:].strip()
                 try:
-                    packet = json.loads(json_str)
+                    packet = parse_packet(json_str)
+                    if packet is None:
+                        continue
                     summary = evaluate_clinical_status(packet)
                     print_alert_card(summary)
                 except json.JSONDecodeError as err:
@@ -186,6 +132,6 @@ def listen_serial(port="COM6", baud=115200):
 
 
 if __name__ == "__main__":
-    port = sys.argv[1] if len(sys.argv) > 1 else "COM6"
+    port = sys.argv[1] if len(sys.argv) > 1 else None
     listen_serial(port)
 

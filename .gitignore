@@ -7,3 +7,8 @@ __pycache__/
 *.elf
 lib/
 include/
+
+# Local sensor recordings (not source code)
+data/
+compile_commands.json
+.impeccable/
