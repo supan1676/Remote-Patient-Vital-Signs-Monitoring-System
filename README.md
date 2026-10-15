@@ -19,13 +19,17 @@ Multi-sensor wearable patient monitoring node with an onboard OLED display, dual
 
 ## 📁 Project Files
 
-| File | Purpose |
+| File / Directory | Purpose |
 |:---|:---|
 | `src/main.cpp` | Complete firmware — dual I2C buses, sensor drivers, fallback registers, OLED rendering, and JSON streaming |
 | `platformio.ini` | PlatformIO environment config for ESP32-S3 N16R8 (16 MB flash / 8 MB OPI PSRAM) |
-| `index.html` / `dashboard.html` | Live dashboard (dashboard.html redirects to index.html); local SSE bridge with recorded trends and patient baseline views |
-| `telemetry_bridge.py` | USB serial reader, localhost web server and fresh-packet SSE stream |
-| `ai_decision_engine.py` | Python serial listener that evaluates vitals against baseline alert thresholds |
+| `index.html` / `dashboard.html` | Clinical web dashboard (`dashboard.html` redirects to `index.html`); real-time SSE stream, recorded trends, and patient baseline views |
+| `assets/` | Dashboard styling (`dashboard.css`), reactive UI client (`dashboard.js`), and local offline fonts |
+| `telemetry_bridge.py` | USB serial reader, localhost HTTP/SSE server, and REST API relay |
+| `telemetry_store.py` | SQLite storage (`data/telemetry.sqlite3`) with gap-preserving history downsampling and 30-day pruning |
+| `personal_baseline.py` | 7-day statistical reference engine (median & MAD), wearer enrollment isolation, and departure events |
+| `ai_decision_engine.py` | Standalone Python serial listener that evaluates vitals against baseline alert thresholds |
+| `tests/` | Automated unit tests covering telemetry parsing, SQLite history, and 7-day baseline qualifications |
 | `wiring-guide.html` | Interactive hardware pinout and wiring reference |
 
 ---
@@ -62,7 +66,7 @@ Multi-sensor wearable patient monitoring node with an onboard OLED display, dual
 Single-line JSON output over serial at `115200` baud:
 
 ```json
-[JSON] {"schema_version":2,"uptime_s":45,"device_id":"RPM-NODE-01","risk":"UNKNOWN","sensors":{"oled":true,"mpu":true,"mlx":false,"max":true,"active":3},"vitals":{"heart_rate":null,"spo2":null,"finger_on":false,"raw_ir":721,"raw_red":1040,"temp_core":null,"temp_object":null,"temp_skin":null,"temp_amb":null,"steps":0,"motion_g":1.03},"alerts":{"sos":false,"fall":false},"status_summary":"Waiting for valid optical readings; unavailable measurements are null."}
+[JSON] {"uptime_s":45,"device_id":"RPM-NODE-01","schema_version":2,"board":{"flash_bytes":16777216,"psram_bytes":8388608},"risk":"UNKNOWN","urgent":false,"sensors":{"oled":true,"mpu":true,"mlx":false,"max":true,"active":3},"vitals":{"heart_rate":null,"spo2":null,"finger_on":false,"raw_ir":721,"raw_red":1040,"temp_core":null,"temp_skin":null,"temp_object":null,"temp_amb":null,"steps":0,"motion_g":1.03},"alerts":{"sos":false,"fall":false},"status_summary":"Waiting for valid optical readings; unavailable measurements are null."}
 ```
 
 ### Alert Thresholds
