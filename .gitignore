@@ -12,3 +12,6 @@ include/
 data/
 compile_commands.json
 .impeccable/
+Reference.webp
+DESIGN.md
+PRODUCT.md
