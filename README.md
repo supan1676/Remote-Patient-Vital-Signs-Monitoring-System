@@ -1,201 +1,343 @@
-# IoMT Remote Patient Monitoring (RPM) Node
+# RPM IoMT Patient Monitoring Node
 
-An ESP32-S3 powered Internet of Medical Things (IoMT) node for continuous, non-invasive vital signs monitoring, fall detection, and emergency alerting. Built with **C++ / PlatformIO** (Arduino framework).
+ESP32-S3 firmware, a local serial/HTTP bridge, SQLite history, a patient baseline
+and a browser dashboard for a remote-monitoring prototype.
 
-## 🏥 Overview
+> **Validation status:** the software builds and the host tests pass. The
+> sensors, upload path, TMP117 raw anomaly, MAX30102 accuracy and MPU calibration
+> have **not** been physically verified in this audit because no serial device or
+> reference thermometer was available. Items marked **HARDWARE VERIFICATION
+> REQUIRED** must be checked on the real hardware before making clinical claims.
 
-Multi-sensor wearable patient monitoring node with an onboard OLED display, dual-bus I2C architecture, and structured JSON telemetry over serial for dashboards and alert checkers.
+## Installed hardware
 
-### Key Features
-- **Heart Rate & SpO₂** — MAX30102 optical pulse oximeter (I2C Bus 0: `0x57`)
-- **Object/Surface & Ambient Temperature** — MLX90614 contactless IR thermometer (I2C Bus 0: `0x5A`)
-- **Motion & Fall Detection** — MPU-6050 6-axis IMU (Dedicated I2C Bus 1: `0x68` / `0x69`)
-- **OLED Display** — SSD1306 128×64, real-time vitals dashboard (I2C Bus 0: `0x3C`)
-- **SOS Emergency Button** — GPIO 5, internal pull-up, active LOW
-- **Dual Hardware I2C Buses** — Dedicated bus for MPU-6050 to prevent bus congestion
-- **Telemetry Stream** — Compact single-line JSON stream at 115200 baud (verbose cards are opt-in)
+| Component | Bus / address | Purpose |
+|:---|:---|:---|
+| ESP32-S3 DevKitC-1 N16R8 | 16 MB QIO flash, 8 MB OPI PSRAM | Controller |
+| SSD1306 128×64 OLED | `Wire`, `0x3C`, SDA 8 / SCL 9 | Local display |
+| MAX30102 | `Wire`, `0x57`, SDA 8 / SCL 9 | Optical pulse and SpO2 estimates |
+| 7SEMI TMP117 ES-12132 | `Wire`, one of `0x48`–`0x4B`, SDA 8 / SCL 9 | Actual sensor temperature; clinical wrist contact currently unverified |
+| MPU-6050 / MPU-6500 | `Wire1`, `0x68`/`0x69`, SDA 17 / SCL 18 | Motion and fall candidate detection |
+| SOS pushbutton | GPIO 5 to GND, active LOW | Emergency event |
 
----
+The primary bus runs at 50 kHz. The dedicated IMU bus runs at 400 kHz. All
+breakouts are 3.3 V devices.
 
-## 📁 Project Files
+### Explicitly not installed
 
-| File / Directory | Purpose |
-|:---|:---|
-| `src/main.cpp` | Complete firmware — dual I2C buses, sensor drivers, fallback registers, OLED rendering, and JSON streaming |
-| `platformio.ini` | PlatformIO environment config for ESP32-S3 N16R8 (16 MB flash / 8 MB OPI PSRAM) |
-| `index.html` / `dashboard.html` | Clinical web dashboard (`dashboard.html` redirects to `index.html`); real-time SSE stream, recorded trends, and patient baseline views |
-| `assets/` | Dashboard styling (`dashboard.css`), reactive UI client (`dashboard.js`), and local offline fonts |
-| `telemetry_bridge.py` | USB serial reader, localhost HTTP/SSE server, and REST API relay |
-| `telemetry_store.py` | SQLite storage (`data/telemetry.sqlite3`) with gap-preserving history downsampling and 30-day pruning |
-| `personal_baseline.py` | 7-day statistical reference engine (median & MAD), wearer enrollment isolation, and departure events |
-| `ai_decision_engine.py` | Standalone Python serial listener that evaluates vitals against baseline alert thresholds |
-| `tests/` | Automated unit tests covering telemetry parsing, SQLite history, and 7-day baseline qualifications |
-| `wiring-guide.html` | Interactive hardware pinout and wiring reference |
+SHT40 and MLX90614 are **not installed**. They are optional legacy code paths,
+compiled out by default:
 
----
-
-## 🛠️ Hardware & Pin Configuration (ESP32-S3)
-
-### Primary I2C Bus (`Wire` - Bus 0 at 50 kHz)
-| Component | SDA Pin | SCL Pin | I2C Address | Notes |
-|:---|:---|:---|:---|:---|
-| **SSD1306 OLED** | GPIO 8 | GPIO 9 | `0x3C` | Real-time screen |
-| **MAX30102 Pulse Ox** | GPIO 8 | GPIO 9 | `0x57` | Pulse & SpO2 |
-| **MLX90614 IR Temp** | GPIO 8 | GPIO 9 | `0x5A` | 3.3V operation, SMBus compliant |
-
-### Dedicated Secondary I2C Bus (`Wire1` - Bus 1 at 400 kHz)
-| Component | SDA Pin | SCL Pin | I2C Address | Notes |
-|:---|:---|:---|:---|:---|
-| **MPU-6050 IMU** | GPIO 17 | GPIO 18 | `0x68` / `0x69` | Dedicated bus for fast motion & fall tracking |
-
-### Peripherals
-| Component | Pin | Configuration | Notes |
-|:---|:---|:---|:---|
-| **SOS Pushbutton** | GPIO 5 | `INPUT_PULLUP` | Connect other side to GND (Active LOW) |
-
-> 💡 **Sensors & Power**: All sensor breakout boards operate on the 3.3V rail and include onboard I2C pull-up resistors.
-
----
-
-> ⚕️ **Disclaimer**: This is an educational and engineering prototype. Vital sign calculations are approximations and are not intended to diagnose disease or prescribe medical treatments.
-
----
-
-## 📡 Telemetry Format
-
-Single-line JSON output over serial at `115200` baud:
-
-```json
-[JSON] {"uptime_s":45,"device_id":"RPM-NODE-01","schema_version":2,"board":{"flash_bytes":16777216,"psram_bytes":8388608},"risk":"UNKNOWN","urgent":false,"sensors":{"oled":true,"mpu":true,"mlx":false,"max":true,"active":3},"vitals":{"heart_rate":null,"spo2":null,"finger_on":false,"raw_ir":721,"raw_red":1040,"temp_core":null,"temp_skin":null,"temp_object":null,"temp_amb":null,"steps":0,"motion_g":1.03},"alerts":{"sos":false,"fall":false},"status_summary":"Waiting for valid optical readings; unavailable measurements are null."}
+```ini
+-DRPM_ENABLE_OPTIONAL_SHT40=0
+-DRPM_ENABLE_OPTIONAL_MLX90614=0
 ```
 
-### Alert Thresholds
-| Condition | Threshold | System Action |
+They are not counted in `sensors.active`, `active_max`, the baseline, the
+dashboard tabs, or the sensor inventory. The installed measurement inventory is
+`max`, `mpu`, `tmp117`; therefore `active_max` is **3**. The OLED is a display,
+not a measurement sensor. No SHT40 or MLX90614 library is required by the default
+build. The bridge rejects a packet that claims either sensor is present and also
+rejects non-null legacy temperature fields, so absent hardware cannot become a
+silent data source. The actual TMP117 reading is exposed separately from the
+clinical wrist metric; only the installed TMP117 is counted.
+
+## Temperature and fever policy
+
+The actual TMP117 sensor temperature and the clinical wrist-skin observation are
+separate fields with separate meanings.
+
+- `tmp117_sensor_temperature_c` is the actual TMP117 package/sensor reading. It
+  is diagnostic telemetry, not a wrist-skin or core-body measurement. It is
+  valid from `-55 °C` to `150 °C`. Its raw register and timestamp are published
+  only when the reading is valid.
+- `wrist_skin_temperature_c` is the clinical wrist-skin metric, displayed as
+  **Wrist Skin Temperature (°C)**. While `wrist_contact_status` is
+  `unverified`, it stays JSON `null`, its status stays `unverified`, and its raw
+  register and timestamp stay `null`. The current firmware always emits
+  `unverified` because no validated contact detector is installed.
+- A future verified-contact reading must match the actual sensor value, raw
+  register and timestamp, satisfy the signed conversion, and stay within the
+  clinical wrist range `-10 °C` to `60 °C`. An actual sensor reading outside the
+  clinical wrist range but inside `-55 °C` to `150 °C` remains valid for display;
+  it is not promoted to a clinical wrist value.
+- No fixed offset or conversion is applied, and neither field is called core
+  temperature.
+- `estimated_core_temperature_c` is always JSON `null` and
+  `estimated_core_temperature_status` is always `not_available`.
+- Fever screening is not available. The exact JSON and dashboard message is:
+  **Core temperature unavailable — confirmation required**. The OLED shows
+  `Core temp unavailable` and `confirmation required` because its built-in font
+  lacks U+2014.
+- A wrist reading cannot confirm or rule out fever. If fever is suspected, use a
+  validated clinical thermometer and clinician assessment.
+- Missing, stale, warming, low-quality, sensor-error, not-available and
+  unverified clinical values are JSON `null`; they are never replaced with zero
+  or a previous value.
+- The TMP117 driver uses checked raw I2C reads, not the Adafruit TMP117 library.
+  The temperature register is signed big-endian with
+  `0.0078125 °C/LSB`. `WHO_AM_I (0x0F)` must be `0x0117`. Configuration
+  `0x01A0` selects continuous conversion, eight-sample averaging and a 500 ms
+  cycle. `0xFFFF` and `0x0000` are rejected as stuck-bus patterns, and abrupt
+  changes need a confirming sample.
+- The legacy alias `tmp117_temp_c` is not emitted by the firmware. The bridge
+  tolerates it only as `null`/absent and rejects a non-null value.
+
+Supported wrist/contact status values are `valid`, `warming_up`, `low_quality`,
+`stale`, `sensor_error`, `not_available` and `unverified`. Actual-sensor status
+does not use `unverified`.
+
+## Wiring
+
+### TMP117
+
+| TMP117 pin | Connect to | Notes |
 |:---|:---|:---|
-| Low Heart Rate | BPM < 50 | Warning flag — notify caregiver |
-| High Heart Rate | BPM > 120 | Warning flag — notify caregiver |
-| Low SpO₂ | < 90% | Warning flag — notify caregiver |
-| Temperature | Object/surface and ambient only | No core-temperature estimate or core-temperature alerts |
-| Fall Detection | Below 0.6g then above 2.5g within 60–600ms | Emergency alert — check on patient |
-| SOS Button | GPIO 5 pressed | Emergency alert — check on patient |
+| VIN | 3.3 V | Do not use 5 V. Do not connect the separate 3.3 V pin to VIN. |
+| GND | GND | Common ground |
+| SDA | GPIO 8 | Shared primary I2C |
+| SCL | GPIO 9 | Shared primary I2C, 50 kHz |
+| ALT | Not connected | Alert is not implemented |
+| ADD | As manufactured | Sets one of `0x48`–`0x4B`; identity is checked |
 
----
+### Other installed devices
 
-## 🚀 Building & Flashing
+| Device | Wiring |
+|:---|:---|
+| SSD1306 OLED | VCC 3.3 V, GND, SDA GPIO 8, SCL GPIO 9, address `0x3C` |
+| MAX30102 | VIN 3.3 V, GND, SDA GPIO 8, SCL GPIO 9, address `0x57` |
+| MPU-6050/6500 | VCC 3.3 V, GND, SDA GPIO 17, SCL GPIO 18, AD0 selects `0x68`/`0x69` |
+| SOS button | GPIO 5 to GND; internal pull-up; active LOW |
+
+Do not add SHT40 or MLX90614 wiring for this build.
+
+## Build and upload
+
+PlatformIO is required. The custom board manifest deliberately selects 16 MB
+flash, 8 MB OPI PSRAM and the 16 MB partition table. Do not replace it with the
+stock N8 board definition.
 
 ```bash
 pio device list
-pio run
-pio run -t upload --upload-port /dev/ttyACM0
-python3 telemetry_bridge.py --serial-port /dev/ttyACM0
+pio run -e esp32-s3-devkitc-1
+pio run -e esp32-s3-devkitc-1 -t upload --upload-port COM6
+pio device monitor --port COM6
 ```
 
-Open **http://localhost:8080/index.html**. On Windows, substitute the actual COM port.
+On Linux/macOS use the actual device, for example `/dev/ttyACM0`. On Windows the
+port is usually `COM6` or similar; never copy another machine's port blindly.
 The firmware uses the USB-to-UART connector, not native USB CDC. Only one program
-should own the serial port: close PlatformIO monitor before starting the bridge.
-The bridge supplies the dashboard automatically. Keep it running to record data
-even when the browser is closed. The dashboard opens in light mode by default.
+may own the serial port.
 
-On Arch/CachyOS, serial ports usually belong to `uucp`. A temporary, user-only grant:
+The build was executed in this audit:
+
+- `pio run -e esp32-s3-devkitc-1` — **SUCCESS**
+- `pio run -d diagnostics/tmp117_raw` — **SUCCESS**
+
+The build environment identified `Espressif ESP32-S3-DevKitC-1-N16R8 (16 MB QIO
+flash, 8 MB OPI PSRAM)` with 16,777,216 flash bytes. This is build metadata, not
+physical validation. The SparkFun MAX3010x library emits a nonfatal
+`I2C_BUFFER_LENGTH` redefinition warning during compilation; it comes from the
+library header and does not change the successful build result.
+
+## TMP117 raw-register diagnostic
+
+The diagnostic is a separate PlatformIO project at
+`diagnostics/tmp117_raw/`. It does not use the Adafruit TMP117 library. It
+prints the scan, `WHO_AM_I`, configuration before/after, offset, raw bytes, the
+signed code and converted temperature every second, and flags `0xFFFF`,
+`0x0000`, data-not-ready and read failures.
+
+From the repository root:
 
 ```bash
-sudo setfacl -m u:"$USER":rw /dev/ttyACM0
+pio run -d diagnostics/tmp117_raw
+pio device list
+pio run -d diagnostics/tmp117_raw -t upload --upload-port COM6
+pio device monitor -d diagnostics/tmp117_raw --port COM6
 ```
 
-Reconnecting USB may remove this grant. A persistent option is adding your account
-to `uucp` and logging out and back in. Do not make the device world-writable.
+Then capture at least five minutes of output, including the period in which the
+normal firmware previously displayed about `-0.01 °C`. The output contains no
+patient identifiers. Record:
 
-### Live Monitoring Interfaces
+1. The I2C scan results and whether `WHO_AM_I` is `0x0117`.
+2. The address that responds in `0x48`–`0x4B`.
+3. Configuration before and after, and whether the writable-mask readback
+   matches `0x01A0`.
+4. Offset register raw/signed value.
+5. Whether the `-0.01 °C` event coincides with raw `0xFFFF`.
+6. Whether read failures or `drdy=0` occur at the same time.
+7. The summary counts: successful reads, failures, all-ones, all-zeros and
+   data-not-ready.
 
-1. **Terminal Stream**: Run `pio device monitor` to see raw JSON packets. `RPM_VERBOSE_TELEMETRY=1` also enables verbose cards for diagnostics, but can interrupt optical sampling.
-2. **Web Dashboard**: Run the local bridge and open `http://localhost:8080`. View measurements, recorded trends, patient reference coverage and items for clinician review.
-3. **Threshold Alert Engine (`ai_decision_engine.py`)**: Run `python ai_decision_engine.py COM6` to inspect incoming packets and print status cards.
+`0xFFFF` converts to `-0.0078125 °C`, which a two-decimal display rounds to
+`-0.01 °C`. That is numerically consistent with a stuck-bus pattern, but it does
+**not** prove the cause until the raw diagnostic log captures it. This audit did
+not capture that log because no serial device was available.
 
----
+If the diagnostic shows `WHO_AM_I` mismatch, no ACK, `0xFFFF`/`0x0000`, or
+configuration readback mismatch, stop and check power, common ground, solder
+joints, pull-ups, address strapping and the GPIO 8/9 wiring before running the
+main firmware again.
 
-## 📋 Alert Behavior
+## Telemetry contract
 
-When any alert condition is met:
-1. **OLED Display** — Shows an emergency override screen (`EMERGENCY ALERT` / `SOS CALL` / `FALL ALERT`).
-2. **Serial Stream** — Immediately flags `"risk": "EMERGENCY"` or `"WARNING"` with an alert description.
-3. **Dashboard / Console** — Highlights the affected parameter and prompts the user to check on the patient.
+Single-line JSON at 115200 baud, prefixed with `[JSON]`. Schema version 2. The
+packet is strict on the active count and status/value consistency. The packet
+below is a **synthetic, schema-valid illustration**, not a live hardware capture:
 
----
+```json
+{"uptime_s":45,"device_id":"RPM-NODE-01","firmware_version":"rpm-2.1.0","schema_version":2,"board":{"flash_bytes":16777216,"psram_bytes":8388608},"sensors":{"oled":true,"max":true,"mpu":true,"tmp117":true,"sht40":false,"mlx":false,"active":3,"active_max":3},"vitals":{"heart_rate":72,"heart_rate_status":"valid","heart_rate_timestamp_ms":5000,"spo2":98,"spo2_status":"valid","spo2_timestamp_ms":5000,"finger_on":true,"tmp117_sensor_temperature_c":29.65,"tmp117_sensor_temperature_status":"valid","tmp117_sensor_temperature_raw":3795,"tmp117_sensor_temperature_timestamp_ms":5000,"wrist_contact_status":"unverified","wrist_skin_temperature_c":null,"wrist_skin_temperature_status":"unverified","wrist_skin_temperature_raw":null,"wrist_skin_temperature_timestamp_ms":null,"estimated_core_temperature_c":null,"estimated_core_temperature_status":"not_available","fever_screening":{"status":"not_available","message":"Core temperature unavailable — confirmation required","rule":null,"input":{"measurement":"wrist_skin_temperature","value_c":null,"unit":"C","quality":"unverified","measured":false,"timestamp_ms":null,"raw_register":null},"uncertainty":"No validated core-temperature estimate or core reference is available.","limitations":"Wrist skin temperature is affected by ambient conditions, blood flow, contact pressure and activity. A wrist reading alone cannot confirm or rule out fever."},"motion_g":1.0,"motion_status":"valid","motion_timestamp_ms":5000,"steps":0},"alerts":{"sos":false,"fall":false},"status_summary":"No configured optical alert threshold crossed; core temperature unavailable — confirmation required."}
+```
 
-## 🔮 Future Scope & Planned Sensors (ਬਾਕੀ ਰਹਿੰਦੇ ਸੈਂਸਰ / Roadmap)
+The bridge validates the packet before accepting it. It rejects non-finite or
+malformed numbers, duplicate JSON object keys, contradictory statuses, an absent
+sensor with a valid value, any non-null core temperature, an unsupported fever
+result, a wrong `active_max`, a stuck TMP117 raw pattern marked valid, and
+duplicate identical serial lines. A valid actual TMP117 reading must carry a
+matching signed raw conversion and timestamp. A clinical wrist reading is
+accepted only with verified contact, the same evidence and the `-10..60 °C`
+guard. Unavailable readings are `null`; stale evidence cannot be reused.
 
-Currently, the device captures the primary 4 vital metrics (**Pulse, SpO₂, Temperature, and Fall/Motion**). To evolve this prototype into a comprehensive clinical-grade Remote Patient Monitoring (RPM) system, the following sensors and modules are planned for future integration:
+The bridge only marks the node live after valid JSON and expires the live view
+after five seconds without a fresh packet. It does not replay stale packets to a
+new browser.
 
-| Sensor / Module | Primary Medical Purpose | Target Interface | Clinical Value |
-|:---|:---|:---|:---|
-| **AD8232 / MAX30003** | Single-Lead ECG (Electrocardiogram) | SPI / Analog ADC | Detects arrhythmias, atrial fibrillation, and Heart Rate Variability (HRV). |
-| **GSR / EDA Sensor** | Galvanic Skin Response (Skin Conductance) | Analog ADC | Measures stress, anxiety, emotional arousal, and sympathetic nervous response. |
-| **Cuffless BP (PTT)** | Blood Pressure Estimation (Systolic/Diastolic) | Algorithm (ECG + PPG) | Uses Pulse Transit Time between ECG R-peak and MAX30102 PPG peak for continuous BP. |
-| **Respiration Sensor** | Respiratory Rate & Breathing Effort | Piezoelectric / PPG-derived | Tracks breaths-per-minute for asthma, COPD, and sleep apnea monitoring. |
-| **NEO-6M / NEO-8M** | GPS Location Tracker | Hardware UART | Emergency geolocation dispatch for elderly fall victims or Alzheimer's geo-fencing. |
-| **BME680 / BME280** | Ambient Air Quality, Humidity & Temp | I2C (Bus 0) | Monitors environmental factors triggering respiratory attacks. |
-| **BLE / MQTT Cloud** | Wireless Telemetry & Mobile App Sync | ESP32-S3 WiFi/BLE | Streams patient telemetry directly to cloud databases (AWS IoT/Supabase) and caregiver apps. |
+## Local bridge and dashboard
 
+```bash
+python telemetry_bridge.py --serial-port COM6
+# Windows alternative: python -m pip install pyserial
+```
 
+Open <http://localhost:8080/index.html>. The bridge serves the dashboard, SSE
+stream, SQLite history, baseline and event APIs. It binds to `127.0.0.1` only.
 
-## Live-data behavior and validation
+- The dashboard has four active metrics: heart rate, SpO2, wrist skin
+  temperature and motion. There are no SHT40/MLX tabs.
+- The clinical metric is visibly labelled **Wrist Skin Temperature (°C)**. While
+  contact is unverified it displays no numeric value and its raw/timestamp
+  evidence stays hidden.
+- The actual TMP117 reading is shown separately as **TMP117 Sensor Temperature (°C)**. It can be valid outside the clinical wrist range, but is never promoted to a wrist or core value.
+- Core temperature is shown as unavailable with the exact fever message
+  **Core temperature unavailable — confirmation required**.
+- Recorded history preserves gaps: a missing bucket has null values and the chart
+  starts a new line segment instead of drawing through the gap. Actual TMP117
+  sensor telemetry is not stored as the clinical wrist history metric.
+- CSV export contains the active metrics; missing values are blank.
+- `data/telemetry.sqlite3` is local, additive in schema, and pruned after 30 days.
+  It is excluded from source control.
+- The seven-day baseline requires four active metrics and at least 30 distinct
+  sampled minutes per day. While wrist contact remains unverified, wrist values
+  are not stored, so the baseline cannot qualify; this is intentional rather than
+  a fabricated data path. Wrist skin temperature is baseline context, never a
+  core-temperature estimate.
 
-- No demo patients, generated ECG, fake packet counts, fixed temperature offsets,
-  or made-up stability scores. Sensor status is counted from device flags.
-- JSON `null` and dashboard `—` mean unavailable. Zero motion and zero/negative
-  measured temperatures remain valid numbers. Core temperature is always `null`.
-- MAX30102 runs at 100 Hz with averaging of 4, matching the Maxim algorithm's
-  25 samples/sec. Paired FIFO samples form a four-second window, updated each second.
-  Results require algorithm validity flags; saturation, removal or sampling gaps
-  clear the window. These are prototype estimates, not calibrated clinical measurements.
-- MPU6050/MPU6500 acceleration uses checked register reads at ±8g. Unsupported chip
-  identities are rejected; failed reads no longer substitute 1g.
-- MLX90614 object and ambient readings are reported directly, without a +3°C offset.
-- The bridge marks the device live only after valid JSON and expires it after five
-  seconds without a fresh packet. SSE heartbeat replays do not increment counters.
-- Device details show actual uptime and memory. The chart supports 15-minute,
-  one-hour and 24-hour windows, a measurement cursor and CSV export.
-- Clinician review notes are browser-local and cannot clear hardware alerts.
+## Calibration and physical-validation status
 
-Run software regression checks with `python3 -m unittest discover -s tests -v`.
+| Item | Status |
+|:---|:---|
+| TMP117 signed conversion and byte order | Compile-time vectors pass; diagnostic built |
+| TMP117 `WHO_AM_I` / configuration / stuck-bus rejection | Firmware checks implemented; physical log pending |
+| TMP117 `-0.01 °C` anomaly | Hypothesis: raw `0xFFFF`; **HARDWARE VERIFICATION REQUIRED** |
+| TMP117 accuracy against a reference thermometer | **HARDWARE VERIFICATION REQUIRED**; no reference available |
+| Core temperature | Not implemented; must remain `null` |
+| Fever screening | Not available; no validated rule or reference |
+| MAX30102 initialization, quality, HR/SpO2 | Software checks implemented; accuracy/placement **HARDWARE VERIFICATION REQUIRED** |
+| MPU6050 ranges, axes, failed reads | ±8 g / ±250 dps / 131 LSB/dps / 4096 LSB/g in code; **HARDWARE VERIFICATION REQUIRED** |
+| MPU stationary calibration | Basic startup bias, single orientation; physical retest required |
+| SHT40 / MLX90614 | Not installed, compiled out, not counted, not tested |
 
-### Hardware check on 2026-10-11
+No calibration offset is applied to TMP117. The MPU startup calibration only
+estimates gyro bias and a single-orientation accelerometer bias; it is not a
+six-face accelerometer calibration and is not a clinical motion validation.
 
-The updated firmware was uploaded and its flash hashes verified on `/dev/ttyACM0`.
-The programmer identified an ESP32-S3 revision 0.2 with embedded 8 MB PSRAM.
-Final firmware telemetry reported 16,777,216 flash bytes and 8,386,279 usable
-PSRAM bytes, confirming the N16R8 configuration at runtime.
-Live packets confirmed OLED and MAX30102 online and motion around 1.03–1.04g.
-The IMU returned WHO_AM_I `0x70` (MPU6500-compatible register interface).
-MLX90614 did not respond at `0x5A`; check its power, ground and GPIO 8/9 wiring.
-An additional I2C ACK at `0x03` was observed but its device identity is unverified.
-No finger was detected during the initial capture, so heart rate and SpO₂ were
-correctly unavailable. A later live browser capture showed algorithm estimates of
-100 BPM and 93% SpO₂; after finger removal both returned to unavailable.
-This confirms data flow, not measurement accuracy, temperature functionality,
-or a physical fall/SOS test. The temperature sensor still needs investigation.
+## Tests executed
 
+```bash
+python -m pytest -q
+# 62 passed
 
-## Local clinician dashboard
+node --check assets/dashboard.js
+node --check assets/dashboard_core.js
+node --test tests/dashboard_core.test.js
+# 10 passed
 
-The interface is for a doctor reviewing a patient, with no automated healthy/unhealthy
-verdict. All current work stays local; remote sharing and the proposed later JEV
-model are outside this implementation.
+python -m py_compile temperature_safety.py telemetry_bridge.py \
+  telemetry_store.py personal_baseline.py ai_decision_engine.py
+```
 
-- **Patient overview:** measured signals, time-series history, baseline context,
-  device alerts, sensor availability and a clinician review form.
-- **Patient baseline:** explicitly enroll a patient name or reference. Each metric
-  requires seven elapsed days and seven days containing at least 30 distinct sampled
-  minutes. A sampled minute contains one or more valid measurements, not necessarily
-  a full minute of continuous recording. Missing values never fill coverage.
-- **Comparison:** each ready metric freezes its median and a MAD-based range with
-  engineering noise floors. Three consecutive departures produce an observation;
-  these are prototype statistical comparisons, not clinical diagnostic thresholds.
-- **Temperature:** the unavailable MLX90614 channel stays visible and builds its own
-  reference once measurements arrive; other metrics can become ready independently.
-- **Storage:** the bridge stores up to 30 days of recordings in
-  `data/telemetry.sqlite3` (excluded from Git). Baselines persist across restarts.
-  The latest clinician review is saved separately in this browser for the active
-  enrollment. Clearing browser storage removes that note, but not SQLite recordings.
-- **Appearance:** light mode is the initial default; an explicitly selected dark
-  mode persists in the browser. Desktop and mobile use the same live data source.
+Coverage includes TMP117 conversion/register vectors, stuck-bus masking, separate
+actual-sensor and unverified/verified wrist semantics, MAX/MPU scale constants
+and signal-quality guards (compile-time assertions), backend schema/status
+validation, malformed-type and duplicate-key rejection, fever rejection, SQLite
+migration and gaps, four-metric baseline qualification, and dashboard
+status/gap/CSV behavior.
+
+These are host/software tests. They do not prove the physical sensors work.
+
+## Hardware verification procedure
+
+1. Disconnect power, inspect wiring, confirm common ground and 3.3 V.
+2. Run `pio device list`; upload the TMP117 raw diagnostic to the actual port.
+3. Capture five minutes of diagnostic output and resolve any address,
+   `WHO_AM_I`, configuration, raw-pattern or read-error issue.
+4. Upload the main firmware and watch the boot scan. Confirm OLED, MAX30102,
+   TMP117 and MPU addresses and the `3/3 measurement sensors online` line.
+5. With TMP117 removed, confirm the actual TMP117 fields are null, its status is
+   `not_available`, `sensors.tmp117` is false, and the clinical wrist fields stay
+   null and `unverified`; reconnect and confirm hot-plug recovery.
+6. Keep the sensor still and compare the actual TMP117 reading with a validated
+   reference under controlled conditions. Document ambient temperature, contact
+   pressure and stabilization time. Separately define and validate any future
+   wrist-contact verification method. Do not derive core temperature and do not
+   promote the actual sensor reading to a clinical wrist value without verified
+   contact and matching evidence.
+7. Test MAX30102 with no finger, steady finger, motion and removal. Confirm HR
+   and SpO2 become null and statuses change; record signal quality.
+8. Test MPU at rest and in known orientations; rotate around each axis and
+   compare units/signs. Verify failed reads produce null values, not 1 g.
+9. Press SOS and simulate a fall (safely). Confirm serial, OLED and dashboard
+   alerts and recovery.
+10. Confirm the dashboard shows **Wrist Skin Temperature (°C)** and **TMP117 Sensor Temperature (°C)** as separate values, the exact core-temperature message, and no SHT40/MLX tabs. Confirm no chart line crosses a disconnect gap.
+
+Record results in the hardware log, not in source control.
+
+## Security and privacy
+
+- No credentials, API keys or patient identifiers belong in the repository.
+- The bridge stores a device ID, measurements and optional alias locally. Do not
+  put real patient identifiers in the alias field.
+- The server listens only on localhost. Do not expose it to a network without
+  authentication, TLS and a privacy/security review.
+- Ordinary logs contain sensor status and error strings, not a patient's name or
+  raw clinical history. The dashboard review note is browser-local.
+
+## Remaining work
+
+1. Capture and inspect the TMP117 raw diagnostic; confirm or refute the
+   `0xFFFF` cause of the `-0.01 °C` display.
+2. Physically validate the actual TMP117 sensor reading against a reference and
+   define a defensible measurement/uncertainty protocol. Do not add a fixed
+   offset.
+3. Define and validate a wrist-contact verification method before exposing
+   clinical wrist values. Until then, keep `wrist_skin_temperature_c`,
+   `wrist_skin_temperature_raw` and `wrist_skin_temperature_timestamp_ms` null,
+   and keep `wrist_contact_status` and the wrist status `unverified`.
+4. Validate MAX30102 HR/SpO2 against a reference and document placement/quality
+   limitations.
+5. Re-run MPU range, axis, calibration and fall tests; do not call the
+   single-orientation bias a full calibration.
+6. Decide whether a validated core-temperature method will ever be added. Until
+   then, keep `estimated_core_temperature_c` null and fever screening disabled.
+7. Add CI for the existing host tests and firmware builds.
+
+## Audit records
+
+- [`CODE_AUDIT_MANIFEST.md`](CODE_AUDIT_MANIFEST.md) — scope, software evidence,
+  prior hardware observations and unverified items.
+- [`CODE_CLEANUP_REGISTER.md`](CODE_CLEANUP_REGISTER.md) — findings, dispositions
+  and open verification work.
+- [`NEXT_STEPS.md`](NEXT_STEPS.md) — ordered hardware, contact-verification and
+  release steps.

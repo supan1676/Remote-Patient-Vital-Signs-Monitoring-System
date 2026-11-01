@@ -372,8 +372,8 @@
 <body>
 
 <div class="header">
-  <h1>🏥 IoMT RPM — Real Hardware Wiring Guide</h1>
-  <p>ESP32-S3 Wearable Patient Monitor • All Real-World Components • Every Pin Mapped</p>
+  <h1>🏥 IoMT RPM — Installed Hardware Wiring Guide</h1>
+  <p>ESP32-S3 N16R8 Patient Monitor • MAX30102 + MPU-6050 + TMP117 + OLED • Valid states and limitations documented</p>
 </div>
 
 <div class="tabs">
@@ -390,63 +390,43 @@
 <!-- ==================== OVERVIEW TAB ==================== -->
 <div id="tab-overview" class="tab-panel active">
   <div class="bus-diagram">
-    <h2>🔗 I2C Bus — 4 Devices, 2 Wires</h2>
+    <h2>🔗 Installed I2C Devices — OLED + 3 Sensors</h2>
     <p style="color:var(--text-dim); margin-bottom:1.5rem; font-size:0.9rem;">
-      All four I2C devices share GPIO 8 (SDA) and GPIO 9 (SCL). Each has a unique address — no conflicts.
+      The OLED and two measurement sensors share the primary <code>Wire</code> bus on GPIO 8 (SDA) and GPIO 9 (SCL) at <strong>50 kHz</strong>.
+      The MPU-6050 stays on its own <code>Wire1</code> bus on GPIO 17 (SDA) and GPIO 18 (SCL) at 400 kHz.
     </p>
-    <svg viewBox="0 0 900 200" class="schematic-svg" style="max-width:900px;">
-      <!-- I2C Bus Lines -->
-      <line x1="50" y1="90" x2="850" y2="90" stroke="#22c55e" stroke-width="3" stroke-dasharray="8,4"/>
-      <line x1="50" y1="110" x2="850" y2="110" stroke="#3b82f6" stroke-width="3" stroke-dasharray="8,4"/>
-      <text x="10" y="94" fill="#22c55e" font-size="11" font-family="JetBrains Mono">SDA</text>
-      <text x="10" y="114" fill="#3b82f6" font-size="11" font-family="JetBrains Mono">SCL</text>
-
-      <!-- ESP32-S3 -->
-      <rect x="50" y="30" width="120" height="40" rx="8" fill="#1e293b" stroke="#3b82f6" stroke-width="2"/>
-      <text x="110" y="55" fill="#e2e8f0" font-size="12" font-weight="bold" text-anchor="middle" font-family="Inter">ESP32-S3</text>
-      <line x1="110" y1="70" x2="110" y2="90" stroke="#22c55e" stroke-width="2"/>
-      <text x="80" y="82" fill="#8892a8" font-size="9" font-family="JetBrains Mono">GPIO 8,9</text>
-
-      <!-- MAX30102 -->
-      <rect x="230" y="130" width="120" height="50" rx="8" fill="#1e293b" stroke="#ef4444" stroke-width="2"/>
-      <text x="290" y="152" fill="#f87171" font-size="11" font-weight="bold" text-anchor="middle" font-family="Inter">MAX30102</text>
-      <text x="290" y="168" fill="#8892a8" font-size="9" text-anchor="middle" font-family="JetBrains Mono">0x57 • HR/SpO₂</text>
-      <line x1="290" y1="130" x2="290" y2="110" stroke="#3b82f6" stroke-width="2"/>
-      <line x1="280" y1="130" x2="280" y2="90" stroke="#22c55e" stroke-width="2"/>
-
-      <!-- MLX90614 / MAX30205 -->
-      <rect x="410" y="130" width="120" height="50" rx="8" fill="#1e293b" stroke="#f97316" stroke-width="2"/>
-      <text x="470" y="152" fill="#fb923c" font-size="11" font-weight="bold" text-anchor="middle" font-family="Inter">MLX90614</text>
-      <text x="470" y="168" fill="#8892a8" font-size="9" text-anchor="middle" font-family="JetBrains Mono">0x5A • Temp</text>
-      <line x1="470" y1="130" x2="470" y2="110" stroke="#3b82f6" stroke-width="2"/>
-      <line x1="460" y1="130" x2="460" y2="90" stroke="#22c55e" stroke-width="2"/>
-
-      <!-- MPU6050 -->
-      <rect x="590" y="130" width="120" height="50" rx="8" fill="#1e293b" stroke="#a855f7" stroke-width="2"/>
-      <text x="650" y="152" fill="#c084fc" font-size="11" font-weight="bold" text-anchor="middle" font-family="Inter">MPU6050</text>
-      <text x="650" y="168" fill="#8892a8" font-size="9" text-anchor="middle" font-family="JetBrains Mono">0x68 • IMU</text>
-      <line x1="650" y1="130" x2="650" y2="110" stroke="#3b82f6" stroke-width="2"/>
-      <line x1="640" y1="130" x2="640" y2="90" stroke="#22c55e" stroke-width="2"/>
-
-      <!-- SSD1306 -->
-      <rect x="770" y="130" width="100" height="50" rx="8" fill="#1e293b" stroke="#06b6d4" stroke-width="2"/>
-      <text x="820" y="152" fill="#22d3ee" font-size="11" font-weight="bold" text-anchor="middle" font-family="Inter">SSD1306</text>
-      <text x="820" y="168" fill="#8892a8" font-size="9" text-anchor="middle" font-family="JetBrains Mono">0x3C • OLED</text>
-      <line x1="820" y1="130" x2="820" y2="110" stroke="#3b82f6" stroke-width="2"/>
-      <line x1="810" y1="130" x2="810" y2="90" stroke="#22c55e" stroke-width="2"/>
-    </svg>
+    <table class="full-table">
+      <thead><tr><th>Bus</th><th>Pins</th><th>Clock</th><th>Devices</th></tr></thead>
+      <tbody>
+        <tr><td><code>Wire</code> (primary)</td><td>GPIO 8 SDA / GPIO 9 SCL</td><td>50 kHz</td><td>SSD1306 0x3C, MAX30102 0x57, TMP117 0x48–0x4B</td></tr>
+        <tr><td><code>Wire1</code> (dedicated IMU)</td><td>GPIO 17 SDA / GPIO 18 SCL</td><td>400 kHz</td><td>MPU-6050 0x68 or 0x69 only</td></tr>
+      </tbody>
+    </table>
+    <p style="color:var(--text-dim); margin-top:1rem; font-size:0.85rem;">
+      TMP117 ADD strapping selects one of <code>0x48</code>, <code>0x49</code>, <code>0x4A</code> or <code>0x4B</code>.
+      The firmware scans those addresses and verifies <code>WHO_AM_I = 0x0117</code>.
+      No address is assumed without a successful initialization/read.
+    </p>
+    <p style="color:var(--text-dim); margin-top:0.75rem; font-size:0.85rem;">
+      <strong>Not installed:</strong> SHT40 and MLX90614 are not part of this build. Their legacy paths are compiled out, no wiring is provided, they are not counted in <code>active_max</code>, and they are not required by the default firmware or its library set. Do not add either module for this build.
+    </p>
   </div>
 
   <div class="component-grid">
     <div class="comp-card" style="--card-accent: var(--green);">
       <div class="comp-icon" style="background:rgba(34,197,94,0.12); color:var(--green);">✅</div>
-      <div style="font-weight:700; font-size:1.1rem; margin-bottom:0.5rem;">4 of 7 Components — Same as Simulation</div>
-      <p class="comp-purpose">MPU6050, SSD1306 OLED, Pushbutton, and the I2C bus wiring are <strong>identical</strong> to your Wokwi project. Zero changes needed for these.</p>
+      <div style="font-weight:700; font-size:1.1rem; margin-bottom:0.5rem;">Primary Bus — OLED + 2 Sensors</div>
+      <p class="comp-purpose">SSD1306 OLED, MAX30102 and <strong>7SEMI TMP117 ES-12132</strong> share GPIO 8/9. The clock remains at 50 kHz for the shared bus. The MPU-6050 is isolated on <code>Wire1</code>.</p>
+    </div>
+    <div class="comp-card" style="--card-accent: var(--purple);">
+      <div class="comp-icon" style="background:rgba(168,85,247,0.12); color:var(--purple);">🔌</div>
+      <div style="font-weight:700; font-size:1.1rem; margin-bottom:0.5rem;">Dedicated IMU Bus</div>
+      <p class="comp-purpose">The MPU-6050 stays on <strong>GPIO 17/18</strong> (<code>Wire1</code>). Do not move it to GPIO 8/9 and do not use GPIO 17/18 for other peripherals.</p>
     </div>
     <div class="comp-card" style="--card-accent: var(--orange);">
-      <div class="comp-icon" style="background:rgba(249,115,22,0.12); color:var(--orange);">🔄</div>
-      <div style="font-weight:700; font-size:1.1rem; margin-bottom:0.5rem;">3 Components — Swapped for Real Hardware</div>
-      <p class="comp-purpose"><strong>Potentiometer → MAX30102</strong> (real HR/SpO₂)<br><strong>DHT22 → MLX90614</strong> (skin temperature)<br><strong>Buzzer → Vibration Motor</strong> (silent alert + MOSFET driver)</p>
+      <div class="comp-icon" style="background:rgba(249,115,22,0.12); color:var(--orange);">📳</div>
+      <div style="font-weight:700; font-size:1.1rem; margin-bottom:0.5rem;">SOS & Optional Haptics</div>
+      <p class="comp-purpose">The SOS button uses GPIO 5 with <code>INPUT_PULLUP</code> and active-LOW logic. The current firmware does not drive a vibration motor; if one is added later, use a free GPIO with a MOSFET driver, never GPIO 17/18.</p>
     </div>
   </div>
 </div>
@@ -475,25 +455,49 @@
       </div>
     </div>
 
-    <!-- MLX90614 -->
+    <!-- 7SEMI TMP117 -->
     <div class="comp-card" style="--card-accent: var(--orange);">
       <div class="comp-header">
         <div class="comp-icon" style="background:rgba(249,115,22,0.12); color:var(--orange);">🌡️</div>
-        <div><div class="comp-name">MLX90614 — IR Temperature</div><div class="comp-desc">Contactless skin temperature (GY-906 module)</div></div>
+        <div><div class="comp-name">7SEMI TMP117 — ES-12132</div><div class="comp-desc">Actual sensor temperature, I2C (datasheet accuracy; not calibrated here)</div></div>
       </div>
-      <p class="comp-purpose">Infrared thermopile measures skin surface temperature without contact. Reads ~31–34°C on wrist (add +3°C offset for estimated core body temp).</p>
+      <p class="comp-purpose"><code>tmp117_sensor_temperature_c</code> is the actual TMP117 package/sensor reading, displayed separately as <strong>TMP117 Sensor Temperature (°C)</strong>. It is diagnostic telemetry, not a wrist-skin or core-body measurement, and no offset is applied. The clinical <code>wrist_skin_temperature_c</code> field stays null with <code>wrist_contact_status</code> <code>unverified</code> until a validated contact method exists. A verified clinical reading must match the actual sensor value, raw register and timestamp and stay within the <code>-10..60 °C</code> wrist guard.</p>
       <table class="pin-table">
         <tr><th>Sensor Pin</th><th>ESP32-S3</th><th>Wire</th></tr>
-        <tr><td>VCC</td><td>3V3.1</td><td><span class="wire-color" style="background:#ef4444"></span>Red</td></tr>
+        <tr><td>VIN</td><td>3V3.1</td><td><span class="wire-color" style="background:#ef4444"></span>Red</td></tr>
         <tr><td>GND</td><td>GND.1</td><td><span class="wire-color" style="background:#333"></span>Black</td></tr>
         <tr><td>SDA</td><td>GPIO 8</td><td><span class="wire-color" style="background:#22c55e"></span>Green</td></tr>
         <tr><td>SCL</td><td>GPIO 9</td><td><span class="wire-color" style="background:#3b82f6"></span>Blue</td></tr>
+        <tr><td>ALT</td><td>Not connected</td><td>—</td></tr>
+        <tr><td>ADD</td><td>Leave as manufactured</td><td>—</td></tr>
       </table>
       <div class="warning-box info">
-        <span class="icon">💡</span> <strong>Power & Pull-ups:</strong> Connect VCC to the ESP32-S3's <strong>3.3V rail</strong>. Standard breakout modules operate reliably on 3.3V and already include onboard I2C pull-up resistors.
+        <span class="icon">⚠️</span> <strong>Connect the supply to VIN only.</strong> Do not jumper the separate <code>3.3V</code> pin to VIN. ADD selects <code>0x48</code>–<code>0x4B</code>; the firmware verifies the actual address and <code>WHO_AM_I</code>. ALT is not used.
       </div>
       <div class="warning-box info" style="margin-top:0.5rem;">
-        <span class="icon">💡</span> <strong>Alternative: MAX30205</strong> (I2C 0x48, 3.3V native, ±0.1°C). Contact sensor designed for medical wearables — place metal pad against skin. No voltage trap.
+        <span class="icon">📌</span> If a MAX30205 is used at its fixed <code>0x48</code> address, set the TMP117 ADD strapping to <code>0x49</code>–<code>0x4B</code> to avoid an address conflict.
+      </div>
+      <div class="warning-box" style="margin-top:0.5rem;">
+        <span class="icon">🧪</span> <strong>TMP117 raw diagnostic required.</strong> The prior <code>-0.01 °C</code> display is numerically consistent with raw <code>0xFFFF</code> (<code>-0.0078125 °C</code>), but that cause is <strong>not yet proved</strong>. Capture a five-minute raw log with <code>diagnostics/tmp117_raw</code> before trusting the temperature channel. <strong>HARDWARE VERIFICATION REQUIRED.</strong>
+      </div>
+    </div>
+
+    <!-- TMP117 raw diagnostic -->
+    <div class="comp-card" style="--card-accent: var(--orange);">
+      <div class="comp-header">
+        <div class="comp-icon" style="background:rgba(249,115,22,0.12); color:var(--orange);">🧪</div>
+        <div><div class="comp-name">TMP117 Raw-Register Diagnostic</div><div class="comp-desc">Separate PlatformIO project • no Adafruit TMP117 library</div></div>
+      </div>
+      <p class="comp-purpose">Run this before trusting the main firmware temperature. It scans the bus, checks <code>WHO_AM_I</code>, configuration, offset, raw MSB/LSB bytes and the signed conversion, and flags <code>0xFFFF</code>, <code>0x0000</code>, data-not-ready and read errors.</p>
+      <div class="driver-circuit">pio run -d diagnostics/tmp117_raw
+pio device list
+pio run -d diagnostics/tmp117_raw -t upload --upload-port COMx
+pio device monitor -d diagnostics/tmp117_raw --port COMx</div>
+      <div class="warning-box info">
+        <span class="icon">📌</span> Capture at least five minutes, including the period where the normal firmware previously showed about <code>-0.01 °C</code>. Save the complete log; it contains only sensor diagnostics, no patient identifiers.
+      </div>
+      <div class="warning-box">
+        <span class="icon">⚠️</span> If <code>WHO_AM_I</code> is not <code>0x0117</code>, the bus does not ACK, configuration readback does not match <code>0x01A0</code>, or raw <code>0xFFFF</code>/<code>0x0000</code> appears, stop and inspect power, ground, solder joints, pull-ups, address strapping and GPIO 8/9 wiring. Do not treat those readings as temperature.
       </div>
     </div>
 
@@ -503,17 +507,17 @@
         <div class="comp-icon" style="background:rgba(168,85,247,0.12); color:var(--purple);">📐</div>
         <div><div class="comp-name">MPU6050 — 6-Axis IMU</div><div class="comp-desc">Accelerometer + Gyroscope (GY-521 module)</div></div>
       </div>
-      <p class="comp-purpose">Measures acceleration (XYZ) and rotation (XYZ) for fall detection. On wrist, must use 2-stage detection: impact spike + gyro stillness.</p>
+      <p class="comp-purpose">Measures acceleration (XYZ) and rotation (XYZ). The current firmware uses free-fall followed by an impact spike as a <strong>candidate</strong> fall alert. It does not verify later gyro stillness and does not diagnose a fall.</p>
       <table class="pin-table">
         <tr><th>Sensor Pin</th><th>ESP32-S3</th><th>Wire</th></tr>
         <tr><td>VCC</td><td>3V3.1</td><td><span class="wire-color" style="background:#ef4444"></span>Red</td></tr>
         <tr><td>GND</td><td>GND.1</td><td><span class="wire-color" style="background:#333"></span>Black</td></tr>
-        <tr><td>SDA</td><td>GPIO 8</td><td><span class="wire-color" style="background:#22c55e"></span>Green</td></tr>
-        <tr><td>SCL</td><td>GPIO 9</td><td><span class="wire-color" style="background:#3b82f6"></span>Blue</td></tr>
+        <tr><td>SDA</td><td>GPIO 17</td><td><span class="wire-color" style="background:#22c55e"></span>Green</td></tr>
+        <tr><td>SCL</td><td>GPIO 18</td><td><span class="wire-color" style="background:#3b82f6"></span>Blue</td></tr>
         <tr><td>AD0</td><td>GND.1</td><td><span class="wire-color" style="background:#333"></span>Black (tie LOW)</td></tr>
       </table>
       <div class="warning-box info">
-        <span class="icon">📌</span> <strong>AD0 must be tied to GND</strong> — do NOT leave it floating. This sets the I2C address to 0x68. Floating AD0 causes intermittent communication failures.
+        <span class="icon">📌</span> <strong>Dedicated bus:</strong> SDA → <strong>GPIO 17</strong>, SCL → <strong>GPIO 18</strong> (<code>Wire1</code>). <strong>AD0 must be tied to GND</strong> — do NOT leave it floating. This sets the I2C address to 0x68; 0x69 is also accepted. GPIO 17/18 are reserved for this bus.
       </div>
     </div>
 
@@ -542,10 +546,10 @@
         <div class="comp-icon" style="background:rgba(236,72,153,0.12); color:var(--pink);">📳</div>
         <div><div class="comp-name">Vibration Motor + Driver</div><div class="comp-desc">Coin motor with MOSFET/transistor circuit</div></div>
       </div>
-      <p class="comp-purpose">Silent haptic alert — replaces the buzzer for wearable use. Pulses during clinical emergencies.</p>
+      <p class="comp-purpose">Optional future haptic alert. The current firmware does not drive a vibration motor. If added, use a free GPIO with a MOSFET driver — <strong>never GPIO 17/18</strong>, which are the dedicated MPU bus.</p>
       <table class="pin-table">
         <tr><th>Connection</th><th>Pin</th><th>Wire</th></tr>
-        <tr><td>GPIO → MOSFET Gate</td><td>GPIO 18</td><td><span class="wire-color" style="background:#ec4899"></span>Pink</td></tr>
+        <tr><td>GPIO → MOSFET Gate</td><td>Free GPIO (not 17/18)</td><td><span class="wire-color" style="background:#ec4899"></span>Pink</td></tr>
         <tr><td>MOSFET Source</td><td>GND</td><td><span class="wire-color" style="background:#333"></span>Black</td></tr>
         <tr><td>Motor + → 3V3</td><td>3V3.1</td><td><span class="wire-color" style="background:#ef4444"></span>Red</td></tr>
         <tr><td>Motor − → MOSFET Drain</td><td>(via MOSFET)</td><td><span class="wire-color" style="background:#f97316"></span>Orange</td></tr>
@@ -554,7 +558,7 @@
       <div class="warning-box">
         <span class="icon">⚡</span> <strong>NEVER connect motor directly to GPIO!</strong> Motor draws 60–100mA (GPIO max = 40mA) and generates inductive kickback. Use a 2N7000 MOSFET or buy a "vibration motor module" with built-in driver.
       </div>
-      <div class="driver-circuit">ESP32 GPIO 18 ──┐
+      <div class="driver-circuit">ESP32 free GPIO ──┐
                   │
              ┌────┴────┐
              │  Gate    │
@@ -602,17 +606,19 @@
         <tr><td>MAX30102 : SCL</td><td>GPIO 9</td><td><span class="wire-color" style="background:#3b82f6"></span>Blue</td><td><span class="badge i2c">I2C</span></td><td>Shared I2C clock</td></tr>
         <tr><td>MAX30102 : INT</td><td>GPIO 2</td><td><span class="wire-color" style="background:#eab308"></span>Yellow</td><td><span class="badge gpio">GPIO</span></td><td>Optional interrupt</td></tr>
 
-        <tr><td colspan="5" style="background:var(--surface2); font-weight:700; color:var(--orange); font-family:Inter;">🌡️ MLX90614 — IR Temperature (I2C 0x5A)</td></tr>
-        <tr><td>MLX90614 : VCC</td><td>3V3.1</td><td><span class="wire-color" style="background:#ef4444"></span>Red</td><td><span class="badge power">PWR</span></td><td>⚠️ Must be 3.3V BCC version!</td></tr>
-        <tr><td>MLX90614 : GND</td><td>GND.1</td><td><span class="wire-color" style="background:#333"></span>Black</td><td><span class="badge power">PWR</span></td><td>Ground</td></tr>
-        <tr><td>MLX90614 : SDA</td><td>GPIO 8</td><td><span class="wire-color" style="background:#22c55e"></span>Green</td><td><span class="badge i2c">I2C</span></td><td>Shared I2C data</td></tr>
-        <tr><td>MLX90614 : SCL</td><td>GPIO 9</td><td><span class="wire-color" style="background:#3b82f6"></span>Blue</td><td><span class="badge i2c">I2C</span></td><td>Shared I2C clock</td></tr>
+        <tr><td colspan="5" style="background:var(--surface2); font-weight:700; color:var(--orange); font-family:Inter;">🌡️ 7SEMI TMP117 ES-12132 — Contact Temperature (I2C 0x48–0x4B)</td></tr>
+        <tr><td>TMP117 : VIN</td><td>3V3.1</td><td><span class="wire-color" style="background:#ef4444"></span>Red</td><td><span class="badge power">PWR</span></td><td>Supply input. Do not connect the separate 3.3V pin to VIN.</td></tr>
+        <tr><td>TMP117 : GND</td><td>GND.1</td><td><span class="wire-color" style="background:#333"></span>Black</td><td><span class="badge power">PWR</span></td><td>Ground</td></tr>
+        <tr><td>TMP117 : SDA</td><td>GPIO 8</td><td><span class="wire-color" style="background:#22c55e"></span>Green</td><td><span class="badge i2c">I2C</span></td><td>Shared primary I2C data</td></tr>
+        <tr><td>TMP117 : SCL</td><td>GPIO 9</td><td><span class="wire-color" style="background:#3b82f6"></span>Blue</td><td><span class="badge i2c">I2C</span></td><td>Shared primary I2C clock</td></tr>
+        <tr><td>TMP117 : ALT</td><td>Not connected</td><td>—</td><td>—</td><td>Alert/INT not implemented</td></tr>
+        <tr><td>TMP117 : ADD</td><td>Leave as manufactured</td><td>—</td><td>—</td><td>Address selected as 0x48–0x4B; verified by firmware</td></tr>
 
-        <tr><td colspan="5" style="background:var(--surface2); font-weight:700; color:var(--purple); font-family:Inter;">📐 MPU6050 — IMU (I2C 0x68)</td></tr>
+        <tr><td colspan="5" style="background:var(--surface2); font-weight:700; color:var(--purple); font-family:Inter;">📐 MPU6050 — IMU (Dedicated Bus 1, 0x68 / 0x69)</td></tr>
         <tr><td>MPU6050 : VCC</td><td>3V3.1</td><td><span class="wire-color" style="background:#ef4444"></span>Red</td><td><span class="badge power">PWR</span></td><td>3.3V power</td></tr>
         <tr><td>MPU6050 : GND</td><td>GND.1</td><td><span class="wire-color" style="background:#333"></span>Black</td><td><span class="badge power">PWR</span></td><td>Ground</td></tr>
-        <tr><td>MPU6050 : SDA</td><td>GPIO 8</td><td><span class="wire-color" style="background:#22c55e"></span>Green</td><td><span class="badge i2c">I2C</span></td><td>Shared I2C data</td></tr>
-        <tr><td>MPU6050 : SCL</td><td>GPIO 9</td><td><span class="wire-color" style="background:#3b82f6"></span>Blue</td><td><span class="badge i2c">I2C</span></td><td>Shared I2C clock</td></tr>
+        <tr><td>MPU6050 : SDA</td><td>GPIO 17</td><td><span class="wire-color" style="background:#22c55e"></span>Green</td><td><span class="badge i2c">I2C</span></td><td>Dedicated Wire1 data</td></tr>
+        <tr><td>MPU6050 : SCL</td><td>GPIO 18</td><td><span class="wire-color" style="background:#3b82f6"></span>Blue</td><td><span class="badge i2c">I2C</span></td><td>Dedicated Wire1 clock</td></tr>
         <tr><td>MPU6050 : AD0</td><td>GND.1</td><td><span class="wire-color" style="background:#333"></span>Black</td><td><span class="badge gpio">GPIO</span></td><td>Tie LOW → address 0x68</td></tr>
 
         <tr><td colspan="5" style="background:var(--surface2); font-weight:700; color:var(--cyan); font-family:Inter;">📺 SSD1306 — OLED Display (I2C 0x3C)</td></tr>
@@ -621,8 +627,8 @@
         <tr><td>SSD1306 : SDA</td><td>GPIO 8</td><td><span class="wire-color" style="background:#22c55e"></span>Green</td><td><span class="badge i2c">I2C</span></td><td>Shared I2C data</td></tr>
         <tr><td>SSD1306 : SCL</td><td>GPIO 9</td><td><span class="wire-color" style="background:#3b82f6"></span>Blue</td><td><span class="badge i2c">I2C</span></td><td>Shared I2C clock</td></tr>
 
-        <tr><td colspan="5" style="background:var(--surface2); font-weight:700; color:var(--pink); font-family:Inter;">📳 Vibration Motor (via MOSFET Driver)</td></tr>
-        <tr><td>MOSFET Gate</td><td>GPIO 18</td><td><span class="wire-color" style="background:#ec4899"></span>Pink</td><td><span class="badge gpio">GPIO</span></td><td>Signal from ESP32</td></tr>
+        <tr><td colspan="5" style="background:var(--surface2); font-weight:700; color:var(--pink); font-family:Inter;">📳 Optional Vibration Motor (via MOSFET Driver) — not in current firmware</td></tr>
+        <tr><td>MOSFET Gate</td><td>Free GPIO (not 17/18)</td><td><span class="wire-color" style="background:#ec4899"></span>Pink</td><td><span class="badge gpio">GPIO</span></td><td>Signal from ESP32; never use the MPU bus pins</td></tr>
         <tr><td>MOSFET Source</td><td>GND.1</td><td><span class="wire-color" style="background:#333"></span>Black</td><td><span class="badge power">PWR</span></td><td>Ground</td></tr>
         <tr><td>Motor (+)</td><td>3V3.1</td><td><span class="wire-color" style="background:#ef4444"></span>Red</td><td><span class="badge power">PWR</span></td><td>Motor power</td></tr>
         <tr><td>Motor (−)</td><td>MOSFET Drain</td><td><span class="wire-color" style="background:#f97316"></span>Orange</td><td><span class="badge gpio">GPIO</span></td><td>Switched by MOSFET</td></tr>
@@ -642,13 +648,14 @@
       <tbody>
         <tr><td>GPIO 2</td><td>Interrupt</td><td>INPUT</td><td>MAX30102 INT (optional)</td></tr>
         <tr><td>GPIO 5</td><td>Digital</td><td>INPUT_PULLUP</td><td>SOS Pushbutton</td></tr>
-        <tr><td>GPIO 8</td><td>I2C SDA</td><td>BIDIR</td><td>All 4 I2C devices</td></tr>
-        <tr><td>GPIO 9</td><td>I2C SCL</td><td>BIDIR</td><td>All 4 I2C devices</td></tr>
-        <tr><td>GPIO 18</td><td>Digital</td><td>OUTPUT</td><td>Vibration motor (via MOSFET)</td></tr>
+        <tr><td>GPIO 8</td><td>I2C SDA</td><td>BIDIR</td><td><code>Wire</code>: OLED, MAX30102, TMP117</td></tr>
+        <tr><td>GPIO 9</td><td>I2C SCL</td><td>BIDIR</td><td><code>Wire</code>: OLED, MAX30102, TMP117</td></tr>
+        <tr><td>GPIO 17</td><td>I2C SDA</td><td>BIDIR</td><td><code>Wire1</code>: MPU-6050 only</td></tr>
+        <tr><td>GPIO 18</td><td>I2C SCL</td><td>BIDIR</td><td><code>Wire1</code>: MPU-6050 only</td></tr>
       </tbody>
     </table>
     <p style="color:var(--text-dim); margin-top:1rem; font-size:0.85rem;">
-      <strong>Total GPIOs used: 5</strong> (out of 36 available). Plenty of room for future additions like BLE status LED, battery voltage ADC, etc.
+      <strong>Total GPIOs used: 5</strong> (out of 36 available) plus the optional MAX30102 INT. GPIO 17/18 are reserved for the MPU bus and must not be reused for a motor or other peripheral.
     </p>
   </div>
 </div>
@@ -727,11 +734,11 @@
       <div class="pin-center">17</div>
       <div class="pin-right"><span class="pin-dot" style="background:#555"></span> GND <span class="pin-label">Ground</span></div>
 
-      <div class="pin-left">GPIO 17 <span class="pin-dot" style="background:#555"></span></div>
+      <div class="pin-left pin-used"><span class="pin-label" style="color:var(--green)">MPU SDA</span> <strong>GPIO 17</strong> <span class="pin-dot" style="background:var(--green)"></span></div>
       <div class="pin-center">18</div>
       <div class="pin-right"><span class="pin-dot" style="background:#555"></span> GPIO 21</div>
 
-      <div class="pin-left pin-used"><span class="pin-label" style="color:var(--pink)">Vib Motor</span> <strong>GPIO 18</strong> <span class="pin-dot" style="background:var(--pink)"></span></div>
+      <div class="pin-left pin-used"><span class="pin-label" style="color:var(--accent)">MPU SCL</span> <strong>GPIO 18</strong> <span class="pin-dot" style="background:var(--accent)"></span></div>
       <div class="pin-center">19</div>
       <div class="pin-right"><span class="pin-dot" style="background:#555"></span> GPIO 20</div>
 
@@ -755,12 +762,13 @@
       <rect x="300" y="180" width="200" height="140" rx="12" fill="#1e293b" stroke="#3b82f6" stroke-width="2.5"/>
       <text x="400" y="210" fill="#60a5fa" font-size="16" font-weight="bold" text-anchor="middle" font-family="Inter">ESP32-S3</text>
       <text x="400" y="230" fill="#8892a8" font-size="10" text-anchor="middle" font-family="JetBrains Mono">DevKitC-1 • 240MHz</text>
-      <text x="400" y="248" fill="#8892a8" font-size="10" text-anchor="middle" font-family="JetBrains Mono">WiFi + BLE 5.0</text>
+      <text x="400" y="248" fill="#8892a8" font-size="10" text-anchor="middle" font-family="JetBrains Mono">USB serial • local bridge</text>
 
-      <!-- I2C Label -->
-      <text x="400" y="272" fill="#22c55e" font-size="9" text-anchor="middle" font-family="JetBrains Mono">I2C: GPIO 8 (SDA) / GPIO 9 (SCL)</text>
-      <text x="400" y="288" fill="#ec4899" font-size="9" text-anchor="middle" font-family="JetBrains Mono">GPIO 5 (SOS) • GPIO 18 (Motor)</text>
-      <text x="400" y="304" fill="#eab308" font-size="9" text-anchor="middle" font-family="JetBrains Mono">GPIO 2 (INT) • BLE TX</text>
+      <!-- I2C Labels -->
+      <text x="400" y="268" fill="#22c55e" font-size="8" text-anchor="middle" font-family="JetBrains Mono">Wire: GPIO 8 SDA / GPIO 9 SCL (50 kHz)</text>
+      <text x="400" y="280" fill="#22c55e" font-size="8" text-anchor="middle" font-family="JetBrains Mono">OLED • MAX30102 • TMP117</text>
+      <text x="400" y="294" fill="#a855f7" font-size="8" text-anchor="middle" font-family="JetBrains Mono">Wire1: GPIO 17 SDA / GPIO 18 SCL (400 kHz)</text>
+      <text x="400" y="306" fill="#a855f7" font-size="8" text-anchor="middle" font-family="JetBrains Mono">MPU-6050 only • GPIO 5 SOS</text>
 
       <!-- MAX30102 -->
       <rect x="30" y="50" width="160" height="60" rx="10" fill="#1e293b" stroke="#ef4444" stroke-width="2"/>
@@ -769,17 +777,11 @@
       <line x1="190" y1="80" x2="300" y2="200" stroke="#22c55e" stroke-width="1.5" stroke-dasharray="4,3"/>
       <text x="230" y="130" fill="#22c55e" font-size="8" font-family="JetBrains Mono" transform="rotate(-30, 230, 130)">SDA/SCL</text>
 
-      <!-- MLX90614 -->
-      <rect x="30" y="160" width="160" height="60" rx="10" fill="#1e293b" stroke="#f97316" stroke-width="2"/>
-      <text x="110" y="185" fill="#fb923c" font-size="12" font-weight="bold" text-anchor="middle" font-family="Inter">🌡️ MLX90614</text>
-      <text x="110" y="205" fill="#8892a8" font-size="9" text-anchor="middle" font-family="JetBrains Mono">I2C 0x5A • Skin Temp</text>
-      <line x1="190" y1="190" x2="300" y2="230" stroke="#22c55e" stroke-width="1.5" stroke-dasharray="4,3"/>
-
       <!-- MPU6050 -->
       <rect x="30" y="270" width="160" height="60" rx="10" fill="#1e293b" stroke="#a855f7" stroke-width="2"/>
       <text x="110" y="295" fill="#c084fc" font-size="12" font-weight="bold" text-anchor="middle" font-family="Inter">📐 MPU6050</text>
-      <text x="110" y="315" fill="#8892a8" font-size="9" text-anchor="middle" font-family="JetBrains Mono">I2C 0x68 • Fall Detect</text>
-      <line x1="190" y1="300" x2="300" y2="260" stroke="#22c55e" stroke-width="1.5" stroke-dasharray="4,3"/>
+      <text x="110" y="315" fill="#8892a8" font-size="9" text-anchor="middle" font-family="JetBrains Mono">Wire1 0x68 • Fall candidate</text>
+      <line x1="190" y1="300" x2="300" y2="260" stroke="#a855f7" stroke-width="1.5" stroke-dasharray="4,3"/>
 
       <!-- SSD1306 -->
       <rect x="610" y="50" width="160" height="60" rx="10" fill="#1e293b" stroke="#06b6d4" stroke-width="2"/>
@@ -788,11 +790,19 @@
       <line x1="610" y1="80" x2="500" y2="200" stroke="#22c55e" stroke-width="1.5" stroke-dasharray="4,3"/>
       <text x="570" y="130" fill="#22c55e" font-size="8" font-family="JetBrains Mono" transform="rotate(30, 570, 130)">SDA/SCL</text>
 
-      <!-- Vibration Motor -->
-      <rect x="610" y="160" width="160" height="60" rx="10" fill="#1e293b" stroke="#ec4899" stroke-width="2"/>
-      <text x="690" y="185" fill="#f472b6" font-size="12" font-weight="bold" text-anchor="middle" font-family="Inter">📳 Vib Motor</text>
-      <text x="690" y="205" fill="#8892a8" font-size="9" text-anchor="middle" font-family="JetBrains Mono">GPIO 18 + MOSFET</text>
-      <line x1="610" y1="190" x2="500" y2="250" stroke="#ec4899" stroke-width="1.5" stroke-dasharray="4,3"/>
+      <!-- Optional haptic motor; not part of the current firmware -->
+      <rect x="610" y="160" width="160" height="70" rx="10" fill="#1e293b" stroke="#8892a8" stroke-width="1.5" stroke-dasharray="5,4"/>
+      <text x="690" y="182" fill="#cbd5e1" font-size="11" font-weight="bold" text-anchor="middle" font-family="Inter">Optional Haptic</text>
+      <text x="690" y="200" fill="#8892a8" font-size="9" text-anchor="middle" font-family="JetBrains Mono">Future free GPIO</text>
+      <text x="690" y="216" fill="#8892a8" font-size="8" text-anchor="middle" font-family="JetBrains Mono">MOSFET • never 17/18</text>
+      <line x1="610" y1="195" x2="500" y2="250" stroke="#8892a8" stroke-width="1.5" stroke-dasharray="4,3"/>
+
+      <!-- 7SEMI TMP117 -->
+      <rect x="560" y="380" width="220" height="60" rx="10" fill="#1e293b" stroke="#fb923c" stroke-width="2"/>
+      <text x="670" y="402" fill="#fb923c" font-size="11" font-weight="bold" text-anchor="middle" font-family="Inter">TMP117</text>
+      <text x="670" y="418" fill="#8892a8" font-size="9" text-anchor="middle" font-family="JetBrains Mono">0x48–0x4B • WHO_AM_I 0x0117</text>
+      <text x="670" y="432" fill="#8892a8" font-size="8" text-anchor="middle" font-family="JetBrains Mono">GPIO 8 SDA / GPIO 9 SCL</text>
+      <line x1="560" y1="410" x2="500" y2="310" stroke="#22c55e" stroke-width="1.5" stroke-dasharray="4,3"/>
 
       <!-- SOS Button -->
       <rect x="610" y="270" width="160" height="60" rx="10" fill="#1e293b" stroke="#22c55e" stroke-width="2"/>
@@ -800,10 +810,10 @@
       <text x="690" y="315" fill="#8892a8" font-size="9" text-anchor="middle" font-family="JetBrains Mono">GPIO 5 • PULLUP</text>
       <line x1="610" y1="300" x2="500" y2="270" stroke="#4ade80" stroke-width="1.5" stroke-dasharray="4,3"/>
 
-      <!-- BLE Output -->
+      <!-- Serial Output -->
       <rect x="300" y="400" width="200" height="50" rx="10" fill="#1e293b" stroke="#8b5cf6" stroke-width="2"/>
-      <text x="400" y="423" fill="#a78bfa" font-size="12" font-weight="bold" text-anchor="middle" font-family="Inter">📱 BLE → Phone App</text>
-      <text x="400" y="440" fill="#8892a8" font-size="9" text-anchor="middle" font-family="JetBrains Mono">JSON Telemetry Stream</text>
+      <text x="400" y="423" fill="#a78bfa" font-size="12" font-weight="bold" text-anchor="middle" font-family="Inter">🔌 USB Serial → Bridge</text>
+      <text x="400" y="440" fill="#8892a8" font-size="9" text-anchor="middle" font-family="JetBrains Mono">JSON at 115200 baud</text>
       <line x1="400" y1="320" x2="400" y2="400" stroke="#8b5cf6" stroke-width="1.5" stroke-dasharray="6,4"/>
       <polygon points="400,398 395,388 405,388" fill="#8b5cf6"/>
 
@@ -822,10 +832,19 @@
     <div class="comp-card" style="--card-accent: var(--primary);">
       <div class="comp-header">
         <div class="comp-icon" style="background:rgba(59,130,246,0.12); color:var(--primary);">ℹ️</div>
-        <div><div class="comp-name">MLX90614 Clock & Power Note</div><div class="comp-desc">3.3V SMBus device</div></div>
+        <div><div class="comp-name">Primary I2C Bus Clock & Power</div><div class="comp-desc">50 kHz shared by OLED + MAX30102 + TMP117</div></div>
       </div>
-      <p class="comp-purpose">Standard MLX90614 breakout boards run reliably from the ESP32-S3's <strong>3.3V rail</strong> with built-in pull-up resistors.</p>
-      <p class="comp-purpose"><strong>I2C Speed Note:</strong> The MLX90614 uses SMBus timing specifications and operates most reliably with an I2C clock speed of <strong>50 kHz</strong>.</p>
+      <p class="comp-purpose">The SSD1306, MAX30102 and TMP117 all run from the ESP32-S3's <strong>3.3V rail</strong>. Standard breakouts include pull-up resistors; do not add extra pull-ups unless the bus fails to idle high.</p>
+      <p class="comp-purpose"><strong>I2C Speed Note:</strong> The shared primary bus stays at <strong>50 kHz</strong> for timing margin and bus reliability. This applies to every device on GPIO 8/9. Do not raise the bus to 400 kHz globally; the firmware re-asserts 50 kHz after sensor and OLED transactions.</p>
+    </div>
+
+    <div class="comp-card" style="--card-accent: var(--cyan);">
+      <div class="comp-header">
+        <div class="comp-icon" style="background:rgba(6,182,212,0.12); color:var(--cyan);">🌡️</div>
+        <div><div class="comp-name">TMP117 Placement</div><div class="comp-desc">Actual sensor reading; clinical wrist contact unverified</div></div>
+      </div>
+      <p class="comp-purpose">The <strong>TMP117</strong> measures its own package/board temperature. Keep it away from the ESP32-S3 regulator, battery, charging circuit and direct sunlight. Thermal contact, skin coverage, ambient airflow and movement all affect the value.</p>
+      <p class="comp-purpose">The actual reading is <code>tmp117_sensor_temperature_c</code>, displayed as <strong>TMP117 Sensor Temperature (°C)</strong>. The clinical field <code>wrist_skin_temperature_c</code>, displayed as <strong>Wrist Skin Temperature (°C)</strong>, stays unavailable while contact is unverified. Neither field triggers a fever decision. No SHT40 or MLX90614 channel exists in this build.</p>
     </div>
 
     <div class="comp-card" style="--card-accent: var(--red);">
@@ -845,7 +864,7 @@
       </div>
       <p class="comp-purpose">The MAX30102 uses Red (660nm) + IR (880nm) LEDs. These wavelengths need <strong>thin tissue with dense capillaries</strong> (fingertip, earlobe).</p>
       <p class="comp-purpose">On the wrist, thick skin + fat + tendons + bone scatter the signal. Commercial smartwatches use <strong>green LEDs (~530nm)</strong> with custom optics and heavy DSP — technology the bare module doesn't have.</p>
-      <p class="comp-purpose"><strong>Fix:</strong> Mount the MAX30102 as a <strong>finger-clip probe</strong> connected via a short cable to the wrist unit. This gives clinical-grade readings with minimal code complexity.</p>
+      <p class="comp-purpose"><strong>Fix:</strong> Mount the MAX30102 as a <strong>finger-clip probe</strong> connected via a short cable to the wrist unit. This gives cleaner optical readings with minimal code complexity; it does not make the prototype a certified clinical device.</p>
     </div>
 
     <div class="comp-card" style="--card-accent: var(--yellow);">
@@ -853,18 +872,28 @@
         <div class="comp-icon" style="background:rgba(234,179,8,0.12); color:var(--yellow);">🤚</div>
         <div><div class="comp-name">Wrist Fall Detection False Alarms</div><div class="comp-desc">Arm swings trigger >2.5G spikes</div></div>
       </div>
-      <p class="comp-purpose">On a belt/waist, a simple >2.5G threshold reliably detects falls. On the wrist, <strong>clapping, slamming a hand on a table, or swinging your arm quickly</strong> all exceed 2.5G.</p>
-      <p class="comp-purpose"><strong>Fix:</strong> Implement 2-stage verification in code:</p>
-      <p class="comp-purpose">1. Impact spike >3.0G on accelerometer<br>2. Followed by 5 seconds of near-zero angular velocity on <strong>gyroscope</strong> (confirming the patient is immobile, not just gesturing)</p>
+      <p class="comp-purpose">A simple acceleration threshold is often used for belt/waist fall prototypes, but it still requires validation. On the wrist, <strong>clapping, slamming a hand on a table, or swinging your arm quickly</strong> all exceed 2.5G.</p>
+      <p class="comp-purpose"><strong>Current firmware:</strong> a free-fall interval followed by a &gt;2.5 g impact produces a candidate alert. This still false-alarms on wrist gestures and is not clinically validated.</p>
+      <p class="comp-purpose"><strong>Not implemented:</strong> impact spike followed by several seconds of near-zero angular velocity on the gyroscope. Any such change needs wrist-specific data and <strong>HARDWARE VERIFICATION REQUIRED</strong> before it is treated as reliable.</p>
     </div>
 
     <div class="comp-card" style="--card-accent: var(--purple);">
       <div class="comp-header">
         <div class="comp-icon" style="background:rgba(168,85,247,0.12); color:var(--purple);">🌡️</div>
-        <div><div class="comp-name">Skin vs Core Temperature</div><div class="comp-desc">Wrist reads 3°C lower than expected</div></div>
+        <div><div class="comp-name">Skin Temperature Is Not Core Temperature</div><div class="comp-desc">Never add a fixed offset</div></div>
       </div>
-      <p class="comp-purpose">Wrist skin temperature is typically <strong>31–34°C</strong>, not the 37°C core body temperature patients and doctors expect.</p>
-      <p class="comp-purpose"><strong>Fix:</strong> Add a static calibration offset in your code: <code>coreTempEstimate = skinTemp + 3.0;</code> — and clearly label it as "Estimated Core Temp" on the display/telemetry.</p>
+      <p class="comp-purpose">The actual TMP117 sensor reading and the clinical wrist observation are different quantities. Wrist/contact temperature is typically well below the ~37°C core temperature patients and clinicians expect. That difference is physiological, not a sensor fault.</p>
+      <p class="comp-purpose"><strong>Do not</strong> add a fixed offset such as <code>temperature + 3.0</code>. The required correction varies with person, ambient temperature, placement and blood flow, so a constant offset produces a misleading number. The firmware reports <code>tmp117_sensor_temperature_c</code> as actual sensor telemetry and keeps <code>wrist_skin_temperature_c</code> null until contact is verified.</p>
+      <p class="comp-purpose"><strong>Core temperature and fever screening remain unavailable.</strong> The exact dashboard message is <strong>Core temperature unavailable — confirmation required</strong>. Use a validated clinical thermometer and clinician assessment when core temperature is required.</p>
+    </div>
+
+    <div class="comp-card" style="--card-accent: var(--yellow);">
+      <div class="comp-header">
+        <div class="comp-icon" style="background:rgba(234,179,8,0.12); color:var(--yellow);">📊</div>
+        <div><div class="comp-name">Validity States & Limitations</div><div class="comp-desc">Null is not zero, and a gap is not a line</div></div>
+      </div>
+      <p class="comp-purpose">Clinical wrist contact uses <code>valid</code>, <code>warming_up</code>, <code>low_quality</code>, <code>stale</code>, <code>sensor_error</code>, <code>not_available</code> or <code>unverified</code>. The actual TMP117 sensor uses the same hardware states except <code>unverified</code>. Any state other than <code>valid</code> produces JSON <code>null</code>; the dashboard and CSV leave the gap blank instead of drawing through it.</p>
+      <p class="comp-purpose"><strong>MAX30102:</strong> <code>PART_ID</code> must be <code>0x15</code>; contact and signal quality are checked before HR/SpO2 are exposed. Accuracy is <strong>HARDWARE VERIFICATION REQUIRED</strong>. <strong>MPU-6050:</strong> configured for ±8 g and ±250 dps, with basic stationary bias only, not a full six-face calibration. Fall detection is a candidate alert, not a diagnosis.</p>
     </div>
 
     <div class="comp-card" style="--card-accent: var(--green);">
