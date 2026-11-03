@@ -1,0 +1,177 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "RPMIOMTproject System Interfaces Specification",
+  "version": "1.0.0",
+  "description": "Formal hardware pinout, I2C bus assignments, serial telemetry JSON schema, REST endpoints, and database interfaces.",
+  "hardware_interfaces": {
+    "microcontroller": {
+      "model": "ESP32-S3 N16R8",
+      "architecture": "Xtensa dual-core LX7",
+      "clock_mhz": 240,
+      "logic_voltage_volts": 3.3,
+      "flash_mb": 16,
+      "psram_mb": 8
+    },
+    "i2c_buses": [
+      {
+        "bus_id": 0,
+        "wire_instance": "Wire",
+        "sda_gpio": 8,
+        "scl_gpio": 9,
+        "clock_speed_hz": 50000,
+        "pull_up_recommendation": "4.7k ohm to 3.3V",
+        "connected_devices": [
+          {
+            "name": "TMP117 Precision Temperature",
+            "manufacturer": "Texas Instruments (7SEMI breakout)",
+            "i2c_address_range": ["0x48", "0x49", "0x4A", "0x4B"],
+            "detected_address": "0x49",
+            "voltage_rail": "3.3V"
+          },
+          {
+            "name": "MAX30102 Pulse Oximeter & Heart Rate",
+            "manufacturer": "Analog Devices / Maxim Integrated",
+            "i2c_address": "0x57",
+            "voltage_rail": "3.3V",
+            "peak_led_current_ma": 50
+          },
+          {
+            "name": "SSD1306 128x64 OLED Display",
+            "manufacturer": "Solomon Systech",
+            "i2c_address": "0x3C",
+            "voltage_rail": "3.3V"
+          }
+        ]
+      },
+      {
+        "bus_id": 1,
+        "wire_instance": "Wire1",
+        "sda_gpio": 17,
+        "scl_gpio": 18,
+        "clock_speed_hz": 400000,
+        "pull_up_recommendation": "2.2k ohm to 3.3V",
+        "connected_devices": [
+          {
+            "name": "MPU-6050 6-Axis IMU",
+            "manufacturer": "InvenSense / TDK",
+            "i2c_address_range": ["0x68", "0x69"],
+            "detected_address": "0x68",
+            "voltage_rail": "3.3V"
+          }
+        ]
+      }
+    ],
+    "gpio_inputs": [
+      {
+        "gpio": 5,
+        "function": "SOS Emergency Button",
+        "circuit": "Active LOW with internal pull-up and 50ms software debounce"
+      }
+    ]
+  },
+  "serial_telemetry_schema": {
+    "type": "object",
+    "required": [
+      "packet_id",
+      "timestamp_ms",
+      "patient_id",
+      "sensor_health",
+      "metrics"
+    ],
+    "properties": {
+      "packet_id": { "type": "integer", "minimum": 0 },
+      "timestamp_ms": { "type": "integer", "minimum": 0 },
+      "patient_id": { "type": "string" },
+      "sos_active": { "type": "boolean" },
+      "fall_detected": { "type": "boolean" },
+      "sensor_health": {
+        "type": "object",
+        "required": ["max30102", "tmp117", "mpu6050", "oled"],
+        "properties": {
+          "max30102": { "type": "string", "enum": ["ready", "warming_up", "low_quality", "not_found", "sensor_error", "not_connected"] },
+          "tmp117": { "type": "string", "enum": ["ready", "valid", "stale", "not_found", "sensor_error", "not_connected"] },
+          "mpu6050": { "type": "string", "enum": ["ready", "calibrating", "active", "not_found", "sensor_error", "not_connected"] },
+          "oled": { "type": "string", "enum": ["ready", "active", "not_found", "disabled"] }
+        }
+      },
+      "metrics": {
+        "type": "object",
+        "properties": {
+          "heart_rate_bpm": { "type": ["number", "null"], "minimum": 30, "maximum": 240 },
+          "heart_rate_status": { "type": "string" },
+          "spo2_percent": { "type": ["number", "null"], "minimum": 1, "maximum": 100 },
+          "spo2_status": { "type": "string" },
+          "tmp117_sensor_temperature_c": { "type": ["number", "null"], "minimum": -40.0, "maximum": 125.0 },
+          "tmp117_sensor_temperature_raw": { "type": ["integer", "null"] },
+          "tmp117_sensor_temperature_status": { "type": "string" },
+          "wrist_skin_temperature_c": { "type": "null" },
+          "wrist_contact_status": { "type": "string", "enum": ["unverified"] },
+          "estimated_core_temperature_c": { "type": "null" },
+          "fever_screening_status": { "type": "string", "enum": ["not_available"] },
+          "motion_magnitude_g": { "type": ["number", "null"], "minimum": 0.0, "maximum": 16.0 },
+          "fall_alert": { "type": "boolean" },
+          "step_count": { "type": "integer", "minimum": 0 }
+        }
+      }
+    }
+  },
+  "backend_rest_api": {
+    "endpoints": [
+      {
+        "path": "/api/telemetry",
+        "method": "GET",
+        "description": "Returns latest validated telemetry payload."
+      },
+      {
+        "path": "/api/events",
+        "method": "GET",
+        "type": "text/event-stream",
+        "description": "Server-Sent Events streaming real-time telemetry updates."
+      },
+      {
+        "path": "/api/history",
+        "method": "GET",
+        "query_parameters": {
+          "minutes": { "type": "integer", "default": 60 }
+        },
+        "description": "Returns historical time-series observations from SQLite database."
+      },
+      {
+        "path": "/api/baseline",
+        "method": "GET",
+        "description": "Returns 7-day statistical rolling baseline for the active patient."
+      },
+      {
+        "path": "/api/export/csv",
+        "method": "GET",
+        "description": "Exports historical observations as CSV format with blank gaps for missing data."
+      }
+    ]
+  },
+  "database_schema": {
+    "table_name": "observations",
+    "primary_key": "id",
+    "columns": {
+      "id": "INTEGER PRIMARY KEY AUTOINCREMENT",
+      "timestamp": "DATETIME DEFAULT CURRENT_TIMESTAMP",
+      "packet_id": "INTEGER",
+      "device_timestamp_ms": "INTEGER",
+      "patient_id": "TEXT",
+      "heart_rate": "REAL",
+      "heart_rate_status": "TEXT",
+      "spo2": "REAL",
+      "spo2_status": "TEXT",
+      "wrist_skin_temperature": "REAL",
+      "wrist_contact_status": "TEXT",
+      "motion_magnitude": "REAL",
+      "motion_status": "TEXT",
+      "fall_alert": "INTEGER",
+      "step_count": "INTEGER",
+      "tmp117_sensor_temperature": "REAL",
+      "tmp117_sensor_temperature_raw": "INTEGER",
+      "tmp117_sensor_temperature_timestamp_ms": "INTEGER",
+      "tmp117_sensor_temperature_status": "TEXT"
+    }
+  }
+}
+

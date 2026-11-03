@@ -8,6 +8,7 @@
   <title>PulseCare · Patient monitoring</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='9' fill='%232b5a47'/%3E%3Cpath d='M7 16h5l3-6 4 12 3-6h3' fill='none' stroke='white' stroke-width='2'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="/assets/dashboard.css">
+  <script src="/assets/dashboard_core.js" defer></script>
   <script src="/assets/dashboard.js" defer></script>
 </head>
 <body>
@@ -59,9 +60,31 @@
             <div class="metric-strip" role="tablist" aria-label="Select measurement">
               <button class="metric-tab" role="tab" aria-selected="false" data-metric="heart_rate" id="tab-heart_rate"><span class="metric-label"><svg class="icon"><use href="#i-pulse"/></svg>Heart rate</span><span class="metric-reading"><strong id="value-heart_rate">—</strong><span>bpm</span></span><span class="metric-note" id="note-heart_rate">Waiting for signal</span></button>
               <button class="metric-tab" role="tab" aria-selected="false" data-metric="spo2" id="tab-spo2"><span class="metric-label"><svg class="icon"><use href="#i-drop"/></svg>Blood oxygen</span><span class="metric-reading"><strong id="value-spo2">—</strong><span>%</span></span><span class="metric-note" id="note-spo2">Waiting for signal</span></button>
-              <button class="metric-tab" role="tab" aria-selected="false" data-metric="temp_object" id="tab-temp_object"><span class="metric-label"><svg class="icon"><use href="#i-temp"/></svg>Surface temp.</span><span class="metric-reading"><strong id="value-temp_object">—</strong><span>°C</span></span><span class="metric-note" id="note-temp_object">Not connected</span></button>
+              <button class="metric-tab" role="tab" aria-selected="false" data-metric="wrist_skin_temperature" id="tab-wrist_skin_temperature" aria-label="Wrist Skin Temperature (°C)"><span class="metric-label"><svg class="icon"><use href="#i-temp"/></svg>Wrist Skin Temperature (°C)</span><span class="metric-reading"><strong id="value-wrist_skin_temperature">—</strong><span>°C</span></span><span class="metric-note" id="note-wrist_skin_temperature">Contact unverified</span></button>
               <button class="metric-tab selected" role="tab" aria-selected="true" data-metric="motion_g" id="tab-motion_g"><span class="metric-label"><svg class="icon"><use href="#i-motion"/></svg>Movement</span><span class="metric-reading"><strong id="value-motion_g">—</strong><span>g</span></span><span class="metric-note" id="note-motion_g">Waiting for signal</span></button>
             </div>
+            <div class="environment-strip" aria-label="Temperature safety status">
+              <div class="environment-reading core-unavailable">
+                <span class="metric-label"><svg class="icon"><use href="#i-shield"/></svg>Core temperature</span>
+                <span class="metric-reading"><strong id="value-core_temperature">Unavailable</strong></span>
+                <span class="metric-note" id="note-core_temperature">Core temperature unavailable — confirmation required</span>
+              </div>
+              <div class="environment-reading">
+                <span class="metric-label"><svg class="icon"><use href="#i-info"/></svg>Fever screening</span>
+                <span class="metric-reading"><strong id="value-fever_screening">Not available</strong></span>
+                <span class="metric-note" id="note-fever_screening">No validated core-temperature rule is available.</span>
+              </div>
+              <div class="environment-reading">
+                <span class="metric-label"><svg class="icon"><use href="#i-temp"/></svg>TMP117 Sensor Temperature (°C)</span>
+                <span class="metric-reading"><strong id="value-tmp117_sensor_temperature">—</strong></span>
+                <span class="metric-note" id="note-tmp117_sensor_temperature">Actual sensor reading; wrist contact unverified. Not core temperature.</span>
+              </div>
+            </div>
+            <details class="temperature-details" id="temperatureDetails">
+              <summary>Temperature evidence, rule and limitations</summary>
+              <p id="temperatureEvidence">The actual TMP117 sensor reading is shown separately. Clinical wrist skin temperature stays unavailable while contact is unverified.</p>
+              <p id="temperatureUncertainty">No validated core-temperature estimate or fever rule is available.</p>
+            </details>
             <div class="chart-section" role="tabpanel" aria-labelledby="tab-motion_g" id="chartPanel">
               <div class="chart-toolbar"><div class="chart-caption"><span class="series-dot" id="seriesDot"></span><strong id="chartTitle">Movement</strong><span id="chartUnit">g</span></div><div class="range-control" role="group" aria-label="History period"><button data-range="900" class="active" aria-pressed="true">15 min</button><button data-range="3600" aria-pressed="false">1 hour</button><button data-range="86400" aria-pressed="false">24 hours</button></div></div>
               <div class="chart" id="mainChart"><svg tabindex="0" aria-describedby="chartKeyboardHelp" id="trendChart" viewBox="0 0 720 260" preserveAspectRatio="none" role="img" aria-label="Measured movement history"></svg><div class="chart-empty" id="chartEmpty"><svg class="icon"><use href="#i-pulse"/></svg><strong>No recorded readings</strong><p>Connect the device to begin recording this signal.</p></div><div class="chart-tooltip" id="chartTooltip" role="status" hidden></div></div>
@@ -98,12 +121,12 @@
             <div class="coverage-heading"><h3>Seven-day coverage</h3><span id="coverageHelp">Each metric learns independently</span></div><div class="coverage-calendar" id="coverageCalendar"></div>
             <div class="coverage-legend"><span><i class="coverage-key recorded"></i>Recorded</span><span><i class="coverage-key empty"></i>No valid samples</span><span>Minimum 30 sampled minutes per day, per metric</span></div>
           </section>
-          <section class="method-note"><svg class="icon"><use href="#i-baseline"/></svg><h2>A reference, not a diagnosis.</h2><p>Each signal gets its own typical range after seven days with enough valid recordings. Future readings are compared with that fixed range.</p><ul><li>Missing readings are excluded.</li><li>Short bursts don’t count as full days.</li><li>The absent temperature sensor can join later.</li></ul><details><summary>How comparison works</summary><p>The center is the median of sampled-minute averages. The range uses median absolute deviation with a small engineering noise floor. Three consecutive departures create an observation. This is a prototype statistical model, not a validated health assessment.</p></details></section>
+          <section class="method-note"><svg class="icon"><use href="#i-baseline"/></svg><h2>A reference, not a diagnosis.</h2><p>Each signal gets its own typical range after seven days with enough valid recordings. Future readings are compared with that fixed range.</p><ul><li>Missing readings are excluded.</li><li>Short bursts don’t count as full days.</li><li>Each signal can join when its own coverage is ready.</li></ul><details><summary>How comparison works</summary><p>The center is the median of sampled-minute averages. The range uses median absolute deviation with a small engineering noise floor. Three consecutive departures create an observation. This is a prototype statistical model, not a validated health assessment.</p></details></section>
         </div>
         <section class="panel reference-panel"><div class="panel-heading"><div><h2>Patient reference ranges</h2><p>Each measurement becomes comparable when its own baseline is ready.</p></div></div><div class="table-scroll"><table><thead><tr><th>Measurement</th><th>Coverage</th><th>Personal range</th><th>Latest reading</th><th>Comparison</th></tr></thead><tbody id="referenceTable"></tbody></table></div></section>
       </section>
 
-      <section data-view="device" hidden aria-label="Device and sensors"><div class="device-layout"><section class="panel"><div class="panel-heading"><div><h2>ESP32-S3</h2><p id="deviceIdentity">Waiting for device identity</p></div><svg class="icon device-large-icon"><use href="#i-device"/></svg></div><dl class="device-facts" id="deviceFacts"></dl><div class="device-help"><svg class="icon"><use href="#i-info"/></svg><p>Leave the local bridge running to keep recording, even when this browser is closed. Only one application can read the USB serial port at a time.</p></div></section><section class="panel"><div class="panel-heading"><div><h2>Sensor inventory</h2><p>Connectivity and measurement availability are different.</p></div></div><div class="sensor-inventory" id="sensorInventory"></div></section></div><section class="temperature-note"><svg class="icon"><use href="#i-temp"/></svg><div><h2>Temperature channel · ready for integration</h2><p>The MLX90614 channel remains ready for the fourth measurement. When connected, real surface-temperature readings will appear automatically and begin building their own reference. No temperature is estimated from the other sensors.</p></div></section></section>
+      <section data-view="device" hidden aria-label="Device and sensors"><div class="device-layout"><section class="panel"><div class="panel-heading"><div><h2>ESP32-S3</h2><p id="deviceIdentity">Waiting for device identity</p></div><svg class="icon device-large-icon"><use href="#i-device"/></svg></div><dl class="device-facts" id="deviceFacts"></dl><div class="device-help"><svg class="icon"><use href="#i-info"/></svg><p>Leave the local bridge running to keep recording, even when this browser is closed. Only one application can read the USB serial port at a time.</p></div></section><section class="panel"><div class="panel-heading"><div><h2>Sensor inventory</h2><p>Connectivity and measurement availability are different.</p></div></div><div class="sensor-inventory" id="sensorInventory"></div></section></div><section class="temperature-note"><svg class="icon"><use href="#i-temp"/></svg><div><h2>Wrist skin is not core temperature</h2><p>TMP117 reports its own sensor temperature, shown separately as <strong>TMP117 Sensor Temperature (°C)</strong>. Clinical <strong>Wrist Skin Temperature (°C)</strong> stays unavailable while wrist contact is unverified. The firmware rejects stuck-bus and out-of-range values and never applies an offset. Estimated core temperature remains unavailable, and fever screening cannot diagnose fever from a wrist reading. SHT40 and MLX90614 are not installed, are not counted, and are not part of this build.</p></div></section></section>
       <footer class="page-footer"><span><svg class="icon"><use href="#i-shield"/></svg>Local by design</span><p>University prototype · sensor changes support clinician review, not a diagnosis.</p><span id="packetCounter">0 packets received</span></footer>
     </main>
   </div>
