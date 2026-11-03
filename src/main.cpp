@@ -71,6 +71,10 @@ constexpr uint32_t MPU_STALE_MS = 1500;
 constexpr uint32_t OPTICAL_SAMPLE_GAP_MS = 150;
 constexpr uint32_t OPTICAL_STALE_MS = 2000;
 constexpr uint32_t SENSOR_RETRY_MS = 3000;
+// A ~3-4 KB JSON report takes >250 ms on the 115200-baud UART. Without a
+// TX ring buffer, Serial.print blocks the acquisition loop and trips the
+// 150 ms optical gap guard every second, before a 100-sample window can fill.
+constexpr size_t TELEMETRY_TX_BUFFER_BYTES = 8192;
 
 constexpr uint8_t TMP117_CANDIDATE_ADDRESSES[] = {0x48, 0x49, 0x4A, 0x4B};
 constexpr uint8_t SHT40_ADDRESS = 0x44;
@@ -163,6 +167,10 @@ uint32_t lastOpticalResultMs = 0;
 uint32_t lastHeartRateValidMs = 0;
 uint32_t lastSpo2ValidMs = 0;
 uint16_t opticalErrorCount = 0;
+uint32_t opticalSamplesReceived = 0;
+uint32_t opticalWindowsCompleted = 0;
+uint32_t opticalGapResets = 0;
+uint32_t opticalMaxSampleGapMs = 0;
 bool fingerDetected = false;
 int currentBpm = 0;
 int currentSpO2 = 0;
@@ -872,6 +880,7 @@ void resetOpticalState(const char* sensorStatus, const char* measurementStatus) 
 }
 
 void finishOpticalWindow(uint32_t now) {
+    ++opticalWindowsCompleted;
     uint32_t minimum = irSamples[0];
     uint32_t maximum = irSamples[0];
     double sum = 0.0;
@@ -920,7 +929,12 @@ void finishOpticalWindow(uint32_t now) {
 void sampleOptical(uint32_t now) {
     if (!maxPresent) return;
 
+    if (lastOpticalSampleMs > 0) {
+        const uint32_t gap = now - lastOpticalSampleMs;
+        if (gap > opticalMaxSampleGapMs) opticalMaxSampleGapMs = gap;
+    }
     if (lastOpticalSampleMs > 0 && now - lastOpticalSampleMs > OPTICAL_SAMPLE_GAP_MS) {
+        ++opticalGapResets;
         resetOpticalState(SENSOR_LOW_QUALITY, SENSOR_LOW_QUALITY);
         lastOpticalSampleMs = now;
         max30102.clearFIFO();
@@ -933,6 +947,7 @@ void sampleOptical(uint32_t now) {
         max30102.nextSample();
         lastIR = ir;
         lastRed = red;
+        ++opticalSamplesReceived;
         maxError = "none";
 
         if (ir < 50000 || red < 50000 ||
@@ -1175,10 +1190,11 @@ void outputTelemetry(bool urgent) {
     Serial.print(F("[JSON] {"));
     Serial.print(F("\"uptime_s\":")); Serial.print(now / 1000);
     Serial.print(F(",\"device_id\":\"RPM-NODE-01\""));
-    Serial.print(F(",\"firmware_version\":\"rpm-2.1.0\""));
+    Serial.print(F(",\"firmware_version\":\"rpm-2.1.1\""));
     Serial.print(F(",\"schema_version\":2"));
     Serial.printf(",\"board\":{\"flash_bytes\":%u,\"psram_bytes\":%u}",
-                  ESP.getFlashChipSize(), ESP.getPsramSize());
+                  static_cast<unsigned>(ESP.getFlashChipSize()),
+                  static_cast<unsigned>(ESP.getPsramSize()));
     Serial.print(F(",\"risk\":\"")); Serial.print(overallRisk()); Serial.print(F("\""));
     Serial.print(F(",\"urgent\":")); Serial.print(urgent ? F("true") : F("false"));
 
@@ -1211,7 +1227,12 @@ void outputTelemetry(bool urgent) {
     Serial.print(F(",\"status\":\"")); printStatus(maxStatus);
     Serial.print(F("\",\"error\":\""));
     Serial.print(maxError);
-    Serial.print(F("\"}"));
+    Serial.print(F("\",\"window_samples\":")); Serial.print(sampleCount);
+    Serial.print(F(",\"samples_received\":")); Serial.print(opticalSamplesReceived);
+    Serial.print(F(",\"windows_completed\":")); Serial.print(opticalWindowsCompleted);
+    Serial.print(F(",\"sample_gap_resets\":")); Serial.print(opticalGapResets);
+    Serial.print(F(",\"max_sample_gap_ms\":")); Serial.print(opticalMaxSampleGapMs);
+    Serial.print(F("}"));
     Serial.print(F(",\"mpu\":{\"present\":"));
     Serial.print(mpuPresent ? F("true") : F("false"));
     Serial.print(F(",\"status\":\"")); printStatus(mpuStatus);
@@ -1618,6 +1639,9 @@ void updateSensorsHotplug(uint32_t now) {
 // Setup and loop
 // ---------------------------------------------------------------------------
 void setup() {
+    // HardwareSerial requires buffer configuration before begin(). Keep the
+    // wire baud rate unchanged so the existing bridge/monitor still works.
+    Serial.setTxBufferSize(TELEMETRY_TX_BUFFER_BYTES);
     Serial.begin(115200);
     delay(500);
 
@@ -1626,7 +1650,10 @@ void setup() {
     Serial.println(F(" Real sensors only. Missing values are null, never fabricated."));
     Serial.println(F("=============================================================="));
     Serial.printf("[BOARD] model=%s flash=%u psram=%u bytes\n",
-                  ESP.getChipModel(), ESP.getFlashChipSize(), ESP.getPsramSize());
+                  ESP.getChipModel(), static_cast<unsigned>(ESP.getFlashChipSize()),
+                  static_cast<unsigned>(ESP.getPsramSize()));
+    Serial.printf("[SERIAL] TX buffer=%u bytes; telemetry must not block optical sampling\n",
+                  static_cast<unsigned>(TELEMETRY_TX_BUFFER_BYTES));
     Serial.print(F("[POLICY] Wrist skin temperature is not core temperature. "));
     Serial.println(F("Core estimate and fever diagnosis are unavailable."));
 

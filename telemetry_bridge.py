@@ -43,7 +43,10 @@ INSTALLED_SENSORS = ('max', 'mpu', 'tmp117')
 VITAL_NUMERIC_FIELDS = {
     'raw_ir': (0, 262143),
     'raw_red': (0, 262143),
-    'optical_perfusion_index': (0, 20),
+    # Firmware reports peak-to-peak / mean * 100 over 100 positive samples.
+    # That diagnostic ratio can exceed 20%; its mathematical upper bound is
+    # 100 * window length. Do not drop valid telemetry (including SOS) at 20%.
+    'optical_perfusion_index': (0, 10_000),
     'temp_object': (-70, 380),
     'temp_amb': (-70, 380),
     'sht40_temp_c': (-40, 125),

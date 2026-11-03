@@ -11,6 +11,21 @@ from temperature_safety import FEVER_MESSAGE
 
 
 class TelemetryTests(unittest.TestCase):
+    def test_high_optical_perfusion_does_not_drop_valid_vitals_or_sos(self):
+        p = packet(optical_perfusion_index=25.0)
+        p['alerts']['sos'] = True
+        parsed = bridge.parse_packet(json.dumps(p))
+        self.assertIsNotNone(parsed)
+        self.assertEqual(parsed['vitals']['heart_rate'], 72)
+        self.assertEqual(parsed['vitals']['spo2'], 98)
+        self.assertTrue(parsed['alerts']['sos'])
+
+    def test_optical_perfusion_still_rejects_invalid_ratios(self):
+        for value in (-0.1, 10_001, float('inf'), '25', True):
+            with self.subTest(value=value):
+                self.assertIsNone(bridge.parse_packet(json.dumps(
+                    packet(optical_perfusion_index=value))))
+
     def test_parser_accepts_complete_contract(self):
         p = packet()
         parsed = bridge.parse_packet('[JSON] ' + json.dumps(p))
