@@ -79,7 +79,7 @@ def packet(device_id="RPM-NODE-01", **vitals_overrides):
     }
     vitals.update(vitals_overrides)
     return {
-        "uptime_s": 10,
+        "uptime_s": 5,
         "device_id": device_id,
         "firmware_version": "rpm-2.1.0",
         "schema_version": 2,

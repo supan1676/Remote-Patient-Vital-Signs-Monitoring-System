@@ -1,4 +1,14 @@
 __pycache__/
+.venv/
+.venv-jeff/
+.pytest_cache/
+models/*.joblib
+!models/ppg_quality.joblib
+!models/alert_priority.joblib
+models/.mplcache/
+.env
+*.key
+*.pem
 *.pyc
 .vscode/
 .thonny/

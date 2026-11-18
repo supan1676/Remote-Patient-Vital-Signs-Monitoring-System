@@ -1,0 +1,6 @@
+# Install only in .venv-jeff; the main bridge keeps its tested scientific stack.
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.14.0+cpu
+torchvision==0.29.0+cpu
+-e data/jeff-source/packages/python
+-e data/jeff-source/runtime/python

@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 """Serve the dashboard and relay fresh ESP32 JSON packets over SSE."""
 import argparse
+import base64
+import hmac
 import json
 import math
 import os
 import queue
 import sqlite3
+import ssl
 import sys
 import threading
 import time
@@ -17,6 +20,10 @@ from urllib.parse import urlsplit, parse_qs
 from personal_baseline import PersonalBaseline
 from telemetry_store import TelemetryStore
 from temperature_safety import CORE_STATUS, FEVER_MESSAGE
+from ppg_quality import OpticalQualityService, parse_raw_packet
+from care_workflow import CareWorkflow
+from alert_priority import AlertPriorityService
+from decision_support import DecisionSupportService, capture_evidence
 
 try:
     import serial
@@ -65,6 +72,11 @@ sse_clients = []
 sse_lock = threading.Lock()
 telemetry_store = None
 personal_baseline = None
+optical_service = None
+priority_service = None
+care_workflow = None
+assistant_service = None
+required_authorization = None
 latest_comparisons = {}
 last_alerts = {}
 
@@ -101,7 +113,10 @@ def find_serial_port():
 def _number(value):
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
-    return float(value) if math.isfinite(value) else None
+    try:
+        return float(value) if math.isfinite(value) else None
+    except (OverflowError, ValueError):
+        return None
 
 
 def _integer(value):
@@ -110,16 +125,22 @@ def _integer(value):
     return value
 
 
-def _json_safe(value):
+def _json_safe(value, depth=0):
     """Reject NaN/Infinity anywhere in a packet before it can reach SSE."""
-    if value is None or isinstance(value, (str, bool, int)):
+    if depth > 24:
+        return False
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value.bit_length() <= 64
+    if isinstance(value, str):
+        return len(value) <= 4096
+    if value is None or isinstance(value, bool):
         return True
     if isinstance(value, float):
         return math.isfinite(value)
     if isinstance(value, list):
-        return all(_json_safe(item) for item in value)
+        return len(value) <= 512 and all(_json_safe(item, depth + 1) for item in value)
     if isinstance(value, dict):
-        return all(isinstance(key, str) and _json_safe(item)
+        return len(value) <= 256 and all(isinstance(key, str) and _json_safe(item, depth + 1)
                    for key, item in value.items())
     return False
 
@@ -458,15 +479,58 @@ def _object_without_duplicates(pairs):
     return result
 
 
+def _expire_old_measurements(packet):
+    """Fresh transport does not make old samples fresh; preserve alert fields.
+
+    Uptime is rounded down to whole seconds by firmware. Sample clocks are
+    unsigned 32-bit milliseconds; allow the remainder and handle their wrap.
+    """
+    vitals = packet['vitals']
+    boot_ms = int(packet['uptime_s'] * 1000) & 0xffffffff
+    fields = (
+        ('heart_rate', 'heart_rate_status', 'heart_rate_timestamp_ms', 2000),
+        ('spo2', 'spo2_status', 'spo2_timestamp_ms', 2000),
+        ('motion_g', 'motion_status', 'motion_timestamp_ms', 1500),
+        ('tmp117_sensor_temperature_c', 'tmp117_sensor_temperature_status',
+         'tmp117_sensor_temperature_timestamp_ms', 6000),
+    )
+    for value_key, status_key, time_key, max_age in fields:
+        if vitals.get(status_key) != 'valid':
+            continue
+        timestamp = vitals.get(time_key)
+        age = (boot_ms - timestamp) & 0xffffffff
+        # A timestamp up to 999 ms beyond floor(uptime_s)*1000 is current.
+        if 0 <= timestamp <= 0xffffffff and (age <= max_age or age >= 0x100000000 - 999):
+            continue
+        vitals[value_key] = None
+        vitals[status_key] = 'stale'
+        vitals[time_key] = None
+        if value_key == 'tmp117_sensor_temperature_c':
+            vitals['tmp117_sensor_temperature_raw'] = None
+            if vitals.get('wrist_contact_status') == 'verified':
+                for key in ('wrist_skin_temperature_c', 'wrist_skin_temperature_raw',
+                            'wrist_skin_temperature_timestamp_ms'):
+                    vitals[key] = None
+                vitals['wrist_skin_temperature_status'] = 'stale'
+                vitals['fever_screening']['input'].update(
+                    value_c=None, quality='stale', measured=False,
+                    timestamp_ms=None, raw_register=None)
+
+
 def parse_packet(line):
+    if len(line) > 16384:
+        return None
     text = line.removeprefix('[JSON]').strip()
     if not text.startswith('{'):
         return None
     try:
         packet = json.loads(text, object_pairs_hook=_object_without_duplicates)
-    except (ValueError, TypeError):
+        if not _validate_packet(packet):
+            return None
+        _expire_old_measurements(packet)
+        return packet if _validate_packet(packet) else None
+    except (ValueError, TypeError, OverflowError, RecursionError):
         return None
-    return packet if _validate_packet(packet) else None
 
 
 def snapshot():
@@ -477,12 +541,17 @@ def snapshot():
         if not fresh and status['connected']:
             status.update(connected=False,
                           error='Telemetry timed out; waiting for fresh packets.')
+        optical = optical_service.snapshot() if optical_service else None
         return {
             'status': status,
             'telemetry': (latest_telemetry if fresh and status['connected']
                           else None),
             'comparisons': (latest_comparisons if fresh and status['connected']
                             else {}),
+            'optical': optical,
+            'priority': priority_service.snapshot(
+                latest_telemetry if fresh and status['connected'] else None, optical)
+                if priority_service else None,
         }
 
 
@@ -499,6 +568,37 @@ def broadcast():
                 except queue.Empty:
                     pass
                 client.put_nowait(payload)
+
+
+def assistant_context():
+    with state_lock:
+        device = hardware_status.get('device_id')
+    enrollment = personal_baseline.summary(device).get('id') if personal_baseline and device else None
+    return device, enrollment
+
+
+def assistant_evidence(device):
+    current = snapshot()
+    if not current.get('telemetry') or current['telemetry']['device_id'] != device:
+        raise ValueError('Select the currently streaming device.')
+    context = assistant_context()
+    history = telemetry_store.history(device, seconds=300) if telemetry_store else {}
+    enrollment = personal_baseline.summary(device) if personal_baseline else {}
+    started = enrollment.get('started_at')
+    if started is not None:
+        if current['telemetry'].get('_received_at', 0) < started:
+            raise ValueError('Wait for a fresh reading from the new enrollment.')
+        # Discard buckets crossing the wearer boundary; their averages may
+        # contain the previous person's readings even if their end is recent.
+        history = dict(history, points=[p for p in history.get('points', []) if p['time'] >= started])
+    else:
+        history = {}  # A device alone does not establish a person's history.
+    incidents = [i for i in care_workflow.summary(device)['incidents']
+                 if i.get('enrollment_id') == context[1]] if care_workflow else []
+    evidence = capture_evidence(current, history, incidents, context[1])
+    if context != assistant_context():
+        raise ValueError('The patient changed while capturing evidence. Try again.')
+    return evidence
 
 
 def set_disconnected(message):
@@ -540,6 +640,8 @@ def _accept_packet(packet):
     if telemetry_store is not None:
         try:
             telemetry_store.record(packet)
+            if care_workflow is not None:
+                care_workflow.observe(packet)
             if personal_baseline is not None:
                 latest_comparisons = personal_baseline.compare(packet)
                 _record_event_if_new(packet)
@@ -548,6 +650,11 @@ def _accept_packet(packet):
         except sqlite3.Error as exc:
             with state_lock:
                 hardware_status['storage_error'] = str(exc)
+    if priority_service is not None:
+        enrollment_id = (personal_baseline.summary(packet['device_id']).get('id')
+                         if personal_baseline is not None else None)
+        priority_service.submit(packet, optical_service.snapshot() if optical_service else None,
+                                enrollment_id)
     broadcast()
 
 
@@ -585,6 +692,14 @@ def serial_reader_thread(port=None):
                     line, _, remaining = buffer.partition(b'\n')
                     buffer = bytearray(remaining)
                     text = line.decode('utf-8', errors='replace').strip()
+                    if text.startswith('[PPG] '):
+                        raw_packet = parse_raw_packet(text)
+                        if raw_packet is not None and optical_service is not None:
+                            optical_service.submit(raw_packet)
+                        elif raw_packet is None:
+                            with state_lock:
+                                hardware_status['invalid_packets'] += 1
+                        continue
                     if duplicate_suppressor.duplicate(text):
                         with state_lock:
                             hardware_status['duplicates_skipped'] += 1
@@ -612,6 +727,21 @@ def serial_reader_thread(port=None):
 
 
 class TelemetryRequestHandler(SimpleHTTPRequestHandler):
+    def authorized(self):
+        if required_authorization is None or hmac.compare_digest(
+                self.headers.get('Authorization', '').encode('utf-8'), required_authorization.encode('ascii')):
+            return True
+        self.send_response(401)
+        self.send_header('WWW-Authenticate', 'Basic realm="PulseCare", charset="UTF-8"')
+        self.send_header('Cache-Control', 'no-store')
+        self.send_header('Content-Length', '0')
+        self.end_headers()
+        return False
+
+    def do_HEAD(self):
+        if self.authorized():
+            self.send_error(405, 'Use GET for dashboard resources.')
+
     def send_json(self, payload, status=200):
         body = json.dumps(payload, allow_nan=False).encode()
         self.send_response(status)
@@ -622,7 +752,23 @@ class TelemetryRequestHandler(SimpleHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self):
+        if not self.authorized():
+            return
         url = urlsplit(self.path)
+        if url.path == '/api/assistant':
+            return self.send_json(dict(enabled=assistant_service is not None,
+                model=assistant_service.model if assistant_service else None,
+                local_only=True, jeff='routing and evidence checking'))
+        if url.path == '/api/assistant/job':
+            if assistant_service is None:
+                return self.send_json({'error': 'AI summaries are disabled.'}, 503)
+            try:
+                identity = parse_qs(url.query).get('id', [''])[0]
+                return self.send_json(assistant_service.get(identity))
+            except KeyError:
+                return self.send_json({'error': 'Summary not found.'}, 404)
+            except ValueError as exc:
+                return self.send_json({'error': str(exc)}, 409)
         if url.path in ('/api/baseline', '/api/events'):
             if personal_baseline is None:
                 return self.send_json({'error': 'Baseline service is not running.'}, 503)
@@ -641,6 +787,16 @@ class TelemetryRequestHandler(SimpleHTTPRequestHandler):
             except ValueError:
                 return self.send_json({'error': 'seconds must be an integer.'}, 400)
             return self.send_json(telemetry_store.history(device, seconds))
+        if url.path == '/api/optical':
+            return self.send_json(optical_service.snapshot() if optical_service else
+                                  {'status': 'unavailable', 'waveform': []})
+        if url.path == '/api/priority':
+            return self.send_json(snapshot()['priority'] or
+                                  {'zone': 'unknown', 'message': 'Priority service unavailable.'})
+        if url.path == '/api/care':
+            device = parse_qs(url.query).get('device_id', [hardware_status.get('device_id')])[0]
+            return self.send_json(care_workflow.summary(device) if care_workflow else
+                                  {'incidents': [], 'review': None})
         if self.path == '/api/telemetry':
             state = snapshot()
             body = json.dumps(
@@ -687,12 +843,16 @@ class TelemetryRequestHandler(SimpleHTTPRequestHandler):
             self.send_error(404)
 
     def do_POST(self):
-        if self.path != '/api/baseline' or personal_baseline is None:
+        if not self.authorized():
+            return
+        if self.path not in ('/api/baseline', '/api/reviews', '/api/incidents', '/api/assistant') or personal_baseline is None:
             return self.send_json({'error': 'Endpoint unavailable.'}, 404)
         origin = self.headers.get('Origin')
         if origin and urlsplit(origin).netloc != self.headers.get('Host'):
             return self.send_json(
                 {'error': 'Use the local dashboard to update collection.'}, 403)
+        if self.headers.get('Content-Type', '').split(';')[0].lower() != 'application/json':
+            return self.send_json({'error': 'Send application/json.'}, 415)
         try:
             size = int(self.headers.get('Content-Length', '0'))
             if not 0 < size <= 4096:
@@ -701,6 +861,20 @@ class TelemetryRequestHandler(SimpleHTTPRequestHandler):
             if not isinstance(payload, dict):
                 raise ValueError('Expected a JSON object.')
             device = payload.get('device_id')
+            if self.path == '/api/assistant':
+                if assistant_service is None:
+                    return self.send_json({'error': 'AI summaries are disabled.'}, 503)
+                return self.send_json(assistant_service.submit(
+                    payload.get('question'), assistant_evidence(device), payload.get('symptoms')), 202)
+            if self.path in ('/api/reviews', '/api/incidents'):
+                if care_workflow is None or not isinstance(device, str) or not device:
+                    raise ValueError('Patient review service unavailable or device missing.')
+                if self.path == '/api/reviews':
+                    return self.send_json(care_workflow.add_review(
+                        device, payload.get('enrollment_id'), payload.get('author'),
+                        payload.get('decision'), payload.get('note', '')))
+                return self.send_json(care_workflow.update_incident(
+                    device, payload.get('incident_id'), payload.get('action'), payload.get('author')))
             if not isinstance(device, str) or device != hardware_status.get('device_id'):
                 raise ValueError('Select the currently connected device.')
             if payload.get('action') == 'start':
@@ -714,35 +888,99 @@ class TelemetryRequestHandler(SimpleHTTPRequestHandler):
                 personal_baseline.end(device)
                 return self.send_json(personal_baseline.summary(device))
             raise ValueError('Unknown collection action.')
-        except (ValueError, TypeError) as exc:
+        except (ValueError, TypeError, RecursionError, OverflowError) as exc:
             return self.send_json({'error': str(exc)}, 400)
+        except sqlite3.Error:
+            return self.send_json({'error': 'Could not save the record. Check storage and retry.'}, 503)
 
 
 def main():
-    global telemetry_store, personal_baseline
+    global telemetry_store, personal_baseline, optical_service, priority_service, care_workflow, required_authorization, assistant_service
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('port', nargs='?', type=int, default=8080,
                         help='HTTP port (default: 8080)')
     parser.add_argument('--serial-port',
                         help='Explicit serial port, for example /dev/ttyACM0 or COM6')
+    parser.add_argument('--simulate', action='store_true',
+                        help='Stream labeled synthetic demo data in a temporary in-memory database; no ESP32 required')
     parser.add_argument(
         '--database',
-        default=str(Path(__file__).resolve().parent / 'data' / 'telemetry.sqlite3'))
+        help='SQLite history path (default: data/telemetry.sqlite3)')
+    parser.add_argument('--quality-model', default=str(
+        Path(__file__).resolve().parent / 'models' / 'ppg_quality.joblib'))
+    parser.add_argument('--priority-model', default=str(
+        Path(__file__).resolve().parent / 'models' / 'alert_priority.joblib'))
+    parser.add_argument('--record-ppg', help='New JSONL recording path; requires participant/session aliases')
+    parser.add_argument('--participant', help='Anonymous participant alias, e.g. P01')
+    parser.add_argument('--session', help='Recording session alias, e.g. morning-1')
+    parser.add_argument('--host', default='127.0.0.1', help='Non-loopback binding requires TLS and RPM_DASHBOARD_PASSWORD')
+    parser.add_argument('--tls-cert', type=Path)
+    parser.add_argument('--tls-key', type=Path)
+    parser.add_argument('--no-assistant', action='store_true', help='Disable optional Jeff/LLM summaries')
+    parser.add_argument('--llm-model', default='qwen3:1.7b', help='Local Ollama explanation model')
+    parser.add_argument('--ollama-url', default='http://127.0.0.1:11434', help='Loopback Ollama endpoint')
     args = parser.parse_args()
-    telemetry_store = TelemetryStore(args.database)
+    if args.simulate and (args.serial_port or args.database or args.record_ppg):
+        parser.error('--simulate uses a temporary database and cannot be combined with --database, --serial-port or --record-ppg.')
+    password = os.environ.get('RPM_DASHBOARD_PASSWORD')
+    remote = args.host not in ('127.0.0.1', 'localhost', '::1')
+    if remote and (not password or len(password) < 16 or not args.tls_cert or not args.tls_key):
+        parser.error('Remote access requires a password of at least 16 characters in RPM_DASHBOARD_PASSWORD, --tls-cert and --tls-key.')
+    if bool(args.tls_cert) != bool(args.tls_key):
+        parser.error('Supply both --tls-cert and --tls-key.')
+    tls = None
+    if args.tls_cert:
+        tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        tls.minimum_version = ssl.TLSVersion.TLSv1_2
+        try:
+            tls.load_cert_chain(args.tls_cert, args.tls_key)
+        except (OSError, ssl.SSLError) as exc:
+            parser.error(f'Cannot load TLS certificate/key: {exc}')
+    if password:
+        required_authorization = 'Basic ' + base64.b64encode(('rpm:' + password).encode()).decode()
+    try:
+        optical_service = OpticalQualityService(args.quality_model, args.record_ppg,
+                                               args.participant, args.session)
+        priority_service = AlertPriorityService(args.priority_model)
+    except (ValueError, OSError) as exc:
+        parser.error(str(exc))
+    database = ':memory:' if args.simulate else (args.database or str(
+        Path(__file__).resolve().parent / 'data' / 'telemetry.sqlite3'))
+    telemetry_store = TelemetryStore(database)
     personal_baseline = PersonalBaseline(telemetry_store)
+    care_workflow = CareWorkflow(telemetry_store)
+    if not args.no_assistant:
+        try:
+            assistant_service = DecisionSupportService(assistant_context, args.llm_model, args.ollama_url)
+        except ValueError as exc:
+            parser.error(str(exc))
     handler = partial(TelemetryRequestHandler,
                       directory=str(Path(__file__).resolve().parent))
-    server = ThreadingHTTPServer(('127.0.0.1', args.port), handler)
-    threading.Thread(target=serial_reader_thread,
-                     args=(args.serial_port,), daemon=True).start()
-    print(f'Dashboard: http://localhost:{args.port}/index.html', flush=True)
+    server = ThreadingHTTPServer((args.host, args.port), handler)
+    if tls:
+        server.socket = tls.wrap_socket(server.socket, server_side=True)
+    simulator = None
+    if args.simulate:
+        from telemetry_simulator import TelemetrySimulator
+        simulator = TelemetrySimulator(sys.modules[__name__])
+        simulator.start()
+        print('[SIMULATION] Generated readings only; no hardware. Temporary in-memory database. One-minute synthetic pre-roll; streaming once per second.', flush=True)
+    else:
+        threading.Thread(target=serial_reader_thread,
+                         args=(args.serial_port,), daemon=True).start()
+    print(f'Dashboard: {"https" if tls else "http"}://{args.host}:{args.port}/index.html', flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         pass
     finally:
         server.server_close()
+        if simulator:
+            simulator.close()
+        if assistant_service:
+            assistant_service.close()
+        optical_service.close()
+        priority_service.close()
 
 
 if __name__ == '__main__':

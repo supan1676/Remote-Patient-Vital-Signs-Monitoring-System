@@ -26,6 +26,7 @@
 #include <Wire.h>
 #include <math.h>
 #include <string.h>
+#include <esp_system.h>
 
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
@@ -135,6 +136,7 @@ float tmp117CandidateC = NAN;
 bool tmp117CandidatePending = false;
 uint32_t tmp117LastAttemptMs = 0;
 uint32_t tmp117LastValidMs = 0;
+uint32_t tmp117ConfiguredMs = 0;
 uint8_t tmp117ConsecutiveErrors = 0;
 uint16_t tmp117ErrorCount = 0;
 const char* tmp117Status = SENSOR_NOT_AVAILABLE;
@@ -534,14 +536,11 @@ bool initTmp117() {
             Serial.println(F("unavailable (read failed)"));
         }
 
-        // The configured cycle is 500 ms; wait once for the first completed
-        // conversion without an unbounded data-ready loop.
-        delay(600);
-        readTmp117(millis());
-        // Discovery and configuration succeeded, but the first transaction
-        // after the conversion wait may still have lost the address. Report
-        // discovery only while the device is still present.
-        return tmp117Present;
+        // Service the first conversion from loop(), allowing optical FIFO and
+        // SOS processing to continue during conversion and hot-plug recovery.
+        tmp117ConfiguredMs = millis();
+        tmp117LastAttemptMs = 0;
+        return true;
     }
 
     tmp117Present = false;
@@ -551,7 +550,9 @@ bool initTmp117() {
 }
 
 void updateTmp117(uint32_t now) {
-    if (tmp117Present && (now - tmp117LastAttemptMs >= TMP117_READ_INTERVAL_MS)) {
+    if (now - tmp117ConfiguredMs < 600) return;
+    if (tmp117Present && (tmp117LastAttemptMs == 0 ||
+                         now - tmp117LastAttemptMs >= TMP117_READ_INTERVAL_MS)) {
         readTmp117(now);
     }
 }
@@ -656,19 +657,15 @@ const char* orientationFromVector(float x, float y, float z) {
     return y >= 0 ? "y_up" : "y_down";
 }
 
-bool collectMpuCalibrationWindow(ImuCalibration& calibration) {
-    constexpr uint16_t sampleTarget = 80;
+struct MpuCalibrationWindow {
+    uint16_t samples = 0;
     float accelSums[3] = {0, 0, 0};
     float gyroSums[3] = {0, 0, 0};
     float accelMin[3] = {1e9f, 1e9f, 1e9f};
     float accelMax[3] = {-1e9f, -1e9f, -1e9f};
     float gyroMin[3] = {1e9f, 1e9f, 1e9f};
     float gyroMax[3] = {-1e9f, -1e9f, -1e9f};
-    int16_t accelRaw[3];
-    int16_t gyroRaw[3];
-
-    for (uint16_t i = 0; i < sampleTarget; ++i) {
-        if (!mpuRawRead(accelRaw, gyroRaw)) return false;
+    void add(const int16_t accelRaw[3], const int16_t gyroRaw[3]) {
         for (int axis = 0; axis < 3; ++axis) {
             float a = sensor_math::accelRawToG(accelRaw[axis]);
             float g = sensor_math::gyroRawToDps(gyroRaw[axis]);
@@ -679,8 +676,21 @@ bool collectMpuCalibrationWindow(ImuCalibration& calibration) {
             if (g < gyroMin[axis]) gyroMin[axis] = g;
             if (g > gyroMax[axis]) gyroMax[axis] = g;
         }
-        delay(MPU_READ_INTERVAL_MS);
+        ++samples;
     }
+};
+MpuCalibrationWindow recoveryCalibrationWindow;
+bool recoveryCalibrationPending = false;
+
+bool finishMpuCalibration(const MpuCalibrationWindow& window, ImuCalibration& calibration) {
+    constexpr uint16_t sampleTarget = 80;
+    if (window.samples != sampleTarget) return false;
+    const auto& accelSums = window.accelSums;
+    const auto& gyroSums = window.gyroSums;
+    const auto& accelMin = window.accelMin;
+    const auto& accelMax = window.accelMax;
+    const auto& gyroMin = window.gyroMin;
+    const auto& gyroMax = window.gyroMax;
 
     float accelMean[3], gyroMean[3];
     bool stationary = true;
@@ -738,6 +748,17 @@ bool collectMpuCalibrationWindow(ImuCalibration& calibration) {
     calibration.method = "80 samples at 50 Hz; stationarity range checks; single-orientation gravity reference";
     calibration.completedAtMs = millis();
     return true;
+}
+
+bool collectMpuCalibrationWindow(ImuCalibration& calibration) {
+    MpuCalibrationWindow window;
+    int16_t accelRaw[3], gyroRaw[3];
+    for (uint16_t i = 0; i < 80; ++i) {
+        if (!mpuRawRead(accelRaw, gyroRaw)) return false;
+        window.add(accelRaw, gyroRaw);
+        delay(MPU_READ_INTERVAL_MS);
+    }
+    return finishMpuCalibration(window, calibration);
 }
 
 void calibrateMpu() {
@@ -805,6 +826,26 @@ void updateMpu(uint32_t now) {
         mpuLastGyroRaw[i] = gyroRaw[i];
     }
     mpuRawValid = true;
+
+    if (recoveryCalibrationPending) {
+        recoveryCalibrationWindow.add(accelRaw, gyroRaw);
+        mpuStatus = SENSOR_WARMING;
+        if (recoveryCalibrationWindow.samples == 80) {
+            ++imuCalibration.attempts;
+            if (finishMpuCalibration(recoveryCalibrationWindow, imuCalibration)) {
+                recoveryCalibrationPending = false;
+            } else if (imuCalibration.attempts >= 3) {
+                imuCalibration.status = "failed";
+                imuCalibration.accelBiasStatus = "not_estimated_device_moved";
+                recoveryCalibrationPending = false;
+            } else {
+                recoveryCalibrationWindow = MpuCalibrationWindow{};
+            }
+        }
+        // No step/fall decisions from a partly calibrated recovery window.
+        if (recoveryCalibrationPending) return;
+        mpuStatus = SENSOR_VALID;
+    }
 
     float ax = sensor_math::accelRawToG(accelRaw[0]);
     float ay = sensor_math::accelRawToG(accelRaw[1]);
@@ -926,6 +967,60 @@ void finishOpticalWindow(uint32_t now) {
     sampleCount = 75;
 }
 
+// At 25 Hz a batch is about 1 KB/s, alongside the one-second vital report.
+// Timestamps estimate FIFO sample times from the known output rate; sequence
+// numbers, boot identity and explicit drops let the host reject discontinuity.
+struct RawOpticalSample { uint32_t timestamp, red, ir; };
+RawOpticalSample rawOptical[25];
+uint8_t rawOpticalCount = 0;
+uint32_t rawOpticalSequence = 0;
+uint32_t rawOpticalFirstSequence = 0;
+uint32_t rawOpticalDropped = 0;
+uint32_t rawOpticalBootId = 0;
+bool rawOpticalClockSet = false;
+uint32_t rawOpticalLastSampleMs = 0;
+
+void flushRawOptical() {
+    if (!rawOpticalCount) return;
+    static char output[2048];
+    size_t used = snprintf(output, sizeof(output),
+        "[PPG] {\"schema_version\":1,\"device_id\":\"RPM-NODE-01\","
+        "\"boot_id\":%lu,\"seq_start\":%lu,\"sample_rate_hz\":25,"
+        "\"timestamp_source\":\"fifo_estimate\",\"dropped_samples\":%lu,\"samples\":[",
+        static_cast<unsigned long>(rawOpticalBootId),
+        static_cast<unsigned long>(rawOpticalFirstSequence),
+        static_cast<unsigned long>(rawOpticalDropped));
+    for (uint8_t i = 0; i < rawOpticalCount; ++i) {
+        int written = snprintf(output + used, sizeof(output) - used,
+            "%s[%lu,%lu,%lu]", i ? "," : "",
+            static_cast<unsigned long>(rawOptical[i].timestamp),
+            static_cast<unsigned long>(rawOptical[i].red),
+            static_cast<unsigned long>(rawOptical[i].ir));
+        if (written < 0 || static_cast<size_t>(written) >= sizeof(output) - used) {
+            rawOpticalDropped += rawOpticalCount;
+            rawOpticalCount = 0;
+            return;
+        }
+        used += static_cast<size_t>(written);
+    }
+    output[used++] = ']'; output[used++] = '}'; output[used++] = '\n';
+    // Never wait for raw-data output; an explicit sequence gap is preferable
+    // to starving acquisition and disrupting measured vital signs.
+    if (Serial.availableForWrite() >= static_cast<int>(used)) {
+        Serial.write(reinterpret_cast<const uint8_t*>(output), used);
+    } else {
+        rawOpticalDropped += rawOpticalCount;
+    }
+    rawOpticalCount = 0;
+}
+
+void recordRawOptical(uint32_t timestamp, uint32_t red, uint32_t ir) {
+    if (!rawOpticalCount) rawOpticalFirstSequence = rawOpticalSequence;
+    rawOptical[rawOpticalCount++] = {timestamp, red, ir};
+    ++rawOpticalSequence;
+    if (rawOpticalCount == 25) flushRawOptical();
+}
+
 void sampleOptical(uint32_t now) {
     if (!maxPresent) return;
 
@@ -938,12 +1033,22 @@ void sampleOptical(uint32_t now) {
         resetOpticalState(SENSOR_LOW_QUALITY, SENSOR_LOW_QUALITY);
         lastOpticalSampleMs = now;
         max30102.clearFIFO();
+        rawOpticalClockSet = false;
     }
 
     max30102.check();
     while (max30102.available()) {
+        uint32_t sampledAt = now - (max30102.available() - 1) * 40UL;
+        if (rawOpticalClockSet) {
+            const uint32_t expected = rawOpticalLastSampleMs + 40UL;
+            const int32_t drift = static_cast<int32_t>(sampledAt - expected);
+            if (drift >= -80 && drift <= 80) sampledAt = expected;
+        }
+        rawOpticalLastSampleMs = sampledAt;
+        rawOpticalClockSet = true;
         long ir = max30102.getFIFOIR();
         long red = max30102.getFIFORed();
+        recordRawOptical(sampledAt, static_cast<uint32_t>(red), static_cast<uint32_t>(ir));
         max30102.nextSample();
         lastIR = ir;
         lastRed = red;
@@ -1000,6 +1105,9 @@ bool initMax30102() {
     max30102.setPulseAmplitudeRed(0x24);
     max30102.setPulseAmplitudeIR(0x24);
     max30102.clearFIFO();
+    rawOpticalClockSet = false;
+    rawOpticalDropped += rawOpticalCount;
+    rawOpticalCount = 0;
     maxPresent = true;
     maxError = "none";
     maxInitMs = millis();
@@ -1190,7 +1298,7 @@ void outputTelemetry(bool urgent) {
     Serial.print(F("[JSON] {"));
     Serial.print(F("\"uptime_s\":")); Serial.print(now / 1000);
     Serial.print(F(",\"device_id\":\"RPM-NODE-01\""));
-    Serial.print(F(",\"firmware_version\":\"rpm-2.1.1\""));
+    Serial.print(F(",\"firmware_version\":\"rpm-2.2.0\""));
     Serial.print(F(",\"schema_version\":2"));
     Serial.printf(",\"board\":{\"flash_bytes\":%u,\"psram_bytes\":%u}",
                   static_cast<unsigned>(ESP.getFlashChipSize()),
@@ -1612,7 +1720,11 @@ void updateSensorsHotplug(uint32_t now) {
         if (initMpu()) {
             Serial.print(F(">>> [HOT-PLUG] MPU online at 0x"));
             Serial.println(mpuAddress, HEX);
-            calibrateMpu();
+            imuCalibration = ImuCalibration{};
+            imuCalibration.status = "collecting";
+            imuCalibration.accelBiasStatus = "not_estimated";
+            recoveryCalibrationWindow = MpuCalibrationWindow{};
+            recoveryCalibrationPending = true;
         }
     }
     if (!maxPresent && initMax30102()) {
@@ -1639,6 +1751,7 @@ void updateSensorsHotplug(uint32_t now) {
 // Setup and loop
 // ---------------------------------------------------------------------------
 void setup() {
+    rawOpticalBootId = esp_random();
     // HardwareSerial requires buffer configuration before begin(). Keep the
     // wire baud rate unchanged so the existing bridge/monitor still works.
     Serial.setTxBufferSize(TELEMETRY_TX_BUFFER_BYTES);

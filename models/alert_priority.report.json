@@ -1,0 +1,335 @@
+{
+  "model_version": "priority-synthetic-hgb-20261111T105643Z",
+  "training_source": "synthetic",
+  "human_reviewed": false,
+  "clinically_validated": false,
+  "scenarios": 1000000,
+  "timepoints": 60000000,
+  "synthetic_profiles": 100000,
+  "feature_names": [
+    "hr_current",
+    "spo2_current",
+    "hr_mean",
+    "spo2_mean",
+    "hr_std",
+    "spo2_std",
+    "hr_min",
+    "hr_max",
+    "spo2_min",
+    "hr_change",
+    "spo2_change",
+    "hr_slope_per_min",
+    "spo2_slope_per_min",
+    "movement_mean",
+    "movement_current",
+    "active_fraction",
+    "motion_coverage",
+    "valid_fraction",
+    "recent_valid_fraction",
+    "hr_low_run_s",
+    "hr_high_rest_run_s",
+    "hr_very_high_run_s",
+    "spo2_low_run_s",
+    "spo2_warn_fraction",
+    "hr_warn_fraction",
+    "combined_warn_run_s",
+    "rest_or_unknown_current"
+  ],
+  "policy_version": "engineering-alert-policy-v1",
+  "manifest_sha256": "194f34ff80d2b19a027f48763af76808c2509b8b2887ca4e55cfffb6d7d18245",
+  "dataset_hashes": {
+    "signals.npy": "6b538a05c57a65cbeb9b89b3edcca685a719b4fdd58fa9827449c7b92902d475",
+    "quality.npy": "74cba038c555ca889c6d8606ed78ee0b28a887dcda3476f007b27969f147dda2",
+    "features.npy": "e6aef88eb6ad6c25f1be31c89000a60c3364935aeb8661ac807f7e3e2834e4bc",
+    "labels.npy": "4eb24b53cea15f3235fb9b64380b70ab79f2dbcae5c92b2f4a4568535b079a52",
+    "profiles.npy": "edf44cfb4186acec0e691b825c1408ea1b867f64a3c1b182782853e3e417b141",
+    "families.npy": "70ffc158a772226b55d8833fb09a202367855e6bbccef97755673acec49895c1",
+    "patterns.npy": "d6492e5091daef7bc917a9e505870ee8990744838326ba3b767efa01ea42c484",
+    "splits.npy": "1123b2843a03f5f4c575c82dde93a5bb245a8125241400778c67ed41d7be03b7"
+  },
+  "model_sha256": "203fa4da82a7312201a547061b8e792d9e66f21a226663489e83cfe8e5fe3bc9",
+  "sklearn_version": "1.9.1",
+  "numpy_version": "2.5.4",
+  "generation_seed": 20261111,
+  "model_seed": 42,
+  "learning_curve": [
+    {
+      "training_scenarios": 10000,
+      "validation_macro_f1": 0.9980098795869007
+    },
+    {
+      "training_scenarios": 100000,
+      "validation_macro_f1": 0.9990613399798404
+    },
+    {
+      "training_scenarios": 586303,
+      "validation_macro_f1": 0.9989912515143725
+    }
+  ],
+  "hyperparameters": {
+    "categorical_features": "from_dtype",
+    "class_weight": "balanced",
+    "early_stopping": false,
+    "interaction_cst": null,
+    "l2_regularization": 1,
+    "learning_rate": 0.1,
+    "loss": "log_loss",
+    "max_bins": 255,
+    "max_depth": null,
+    "max_features": 1.0,
+    "max_iter": 150,
+    "max_leaf_nodes": 31,
+    "min_samples_leaf": 20,
+    "monotonic_cst": null,
+    "n_iter_no_change": 10,
+    "random_state": 42,
+    "scoring": "loss",
+    "tol": 1e-07,
+    "validation_fraction": 0.1,
+    "verbose": 0,
+    "warm_start": false
+  },
+  "split_profile_ranges": {
+    "train": [
+      0,
+      69999
+    ],
+    "validation": [
+      70000,
+      84999
+    ],
+    "test": [
+      85000,
+      99999
+    ]
+  },
+  "split_families": {
+    "train": [
+      "linear",
+      "step",
+      "plateau",
+      "oscillating"
+    ],
+    "validation": [
+      "sigmoid",
+      "exponential"
+    ],
+    "test": [
+      "staircase",
+      "late_transition"
+    ]
+  },
+  "dataset_class_counts": {
+    "train": {
+      "unknown": 113697,
+      "green": 265136,
+      "yellow": 158583,
+      "red": 162584
+    },
+    "validation": {
+      "unknown": 24136,
+      "green": 54807,
+      "yellow": 42053,
+      "red": 29004
+    },
+    "test": {
+      "unknown": 24461,
+      "green": 54477,
+      "yellow": 39146,
+      "red": 31916
+    }
+  },
+  "eligible_split_sizes": {
+    "train": 586303,
+    "validation": 125864,
+    "test": 125539
+  },
+  "test": {
+    "macro_f1": 0.9992023163049287,
+    "confusion_matrix": [
+      [
+        54446,
+        31,
+        0
+      ],
+      [
+        78,
+        39068,
+        0
+      ],
+      [
+        0,
+        0,
+        31916
+      ]
+    ],
+    "classes": {
+      "green": {
+        "precision": 0.9985694373120094,
+        "recall": 0.9994309525120693,
+        "f1-score": 0.9990000091742277,
+        "support": 54477.0
+      },
+      "yellow": {
+        "precision": 0.999207140847592,
+        "recall": 0.9980074592550963,
+        "f1-score": 0.9986069397405585,
+        "support": 39146.0
+      },
+      "red": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1-score": 1.0,
+        "support": 31916.0
+      },
+      "accuracy": 0.999131743920216,
+      "macro avg": {
+        "precision": 0.9992588593865338,
+        "recall": 0.9991461372557219,
+        "f1-score": 0.9992023163049287,
+        "support": 125539.0
+      },
+      "weighted avg": {
+        "precision": 0.9991319826672681,
+        "recall": 0.999131743920216,
+        "f1-score": 0.9991316703404386,
+        "support": 125539.0
+      }
+    },
+    "red_labeled_as_green": 0,
+    "label_source": "unreviewed synthetic engineering rules"
+  },
+  "majority_baseline": {
+    "macro_f1": 0.20174873344591593,
+    "confusion_matrix": [
+      [
+        54477,
+        0,
+        0
+      ],
+      [
+        39146,
+        0,
+        0
+      ],
+      [
+        31916,
+        0,
+        0
+      ]
+    ],
+    "classes": {
+      "green": {
+        "precision": 0.43394482989349925,
+        "recall": 1.0,
+        "f1-score": 0.6052462003377478,
+        "support": 54477.0
+      },
+      "yellow": {
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1-score": 0.0,
+        "support": 39146.0
+      },
+      "red": {
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1-score": 0.0,
+        "support": 31916.0
+      },
+      "accuracy": 0.43394482989349925,
+      "macro avg": {
+        "precision": 0.14464827663116642,
+        "recall": 0.3333333333333333,
+        "f1-score": 0.20174873344591593,
+        "support": 125539.0
+      },
+      "weighted avg": {
+        "precision": 0.188308115391298,
+        "recall": 0.43394482989349925,
+        "f1-score": 0.2626434594492507,
+        "support": 125539.0
+      }
+    },
+    "red_labeled_as_green": 31916,
+    "label_source": "unreviewed synthetic engineering rules"
+  },
+  "generating_rule_baseline": {
+    "macro_f1": 1.0,
+    "explanation": "Perfect by construction: the rulebook defines these synthetic labels."
+  },
+  "per_test_family": {
+    "staircase": {
+      "samples": 62796,
+      "accuracy": 0.9989649022230715
+    },
+    "late_transition": {
+      "samples": 62743,
+      "accuracy": 0.999298726551169
+    }
+  },
+  "per_test_pattern": {
+    "steady": {
+      "samples": 10712,
+      "accuracy": 0.9999066467513069
+    },
+    "activity": {
+      "samples": 10861,
+      "accuracy": 0.9993554921277967
+    },
+    "falling_oxygen": {
+      "samples": 10569,
+      "accuracy": 0.9998107673384427
+    },
+    "rising_pulse": {
+      "samples": 10772,
+      "accuracy": 0.9997215001856665
+    },
+    "slowing_pulse": {
+      "samples": 10677,
+      "accuracy": 0.9985014517186476
+    },
+    "combined_change": {
+      "samples": 10688,
+      "accuracy": 1.0
+    },
+    "recovery": {
+      "samples": 10567,
+      "accuracy": 1.0
+    },
+    "brief_disturbance": {
+      "samples": 7339,
+      "accuracy": 0.9997274833083526
+    },
+    "persistent_low_oxygen": {
+      "samples": 10892,
+      "accuracy": 1.0
+    },
+    "vigorous_movement": {
+      "samples": 10812,
+      "accuracy": 0.9992600813910469
+    },
+    "missing_data": {
+      "samples": 507,
+      "accuracy": 1.0
+    },
+    "boundary_case": {
+      "samples": 10609,
+      "accuracy": 0.9934960882269771
+    },
+    "variation": {
+      "samples": 10534,
+      "accuracy": 0.9999050692994115
+    }
+  },
+  "duration_seconds": 21.243517299000814,
+  "unknown_policy": "Unknown windows are gated out, not learned as a patient-risk class.",
+  "limitations": [
+    "Engineering rule imitation, not medically reviewed risk labels.",
+    "Artificial profiles are not independent real patients.",
+    "Synthetic performance does not establish clinical accuracy.",
+    "Synthetic class scores are not probabilities of illness or safety.",
+    "The generating rulebook is a simpler exact baseline for this experiment.",
+    "No real-person evaluation, clinical review, or core-temperature input."
+  ]
+}

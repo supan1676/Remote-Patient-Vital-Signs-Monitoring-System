@@ -8,6 +8,8 @@ const metrics = {
   motion_g: {label:'Movement', unit:'g', color:'--ochre', sensor:'mpu', icon:'motion', decimals:2, status:'motion_status', context:'Acceleration includes gravity. A resting sensor typically measures around 1g.', empty:'Connect the motion sensor to record measured acceleration.', minSpan:.3}
 };
 const state={packet:null,status:{},selected:'motion_g',range:900,history:[],baseline:{status:'not_started',metrics:{},days:[]},events:[],lastPacket:null,lastReceived:0,comparisons:{},historyRequest:0,device:null,chartPoints:[],chartBounds:null};
+const assistant={enabled:false,busy:false,job:null,device:null,enrollment:null,request:0};
+state.care={incidents:[],review:null};
 const finite=v=>core?core.finite(v):(typeof v==='number'&&Number.isFinite(v)?v:null);
 const esc=v=>String(v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const icon=name=>`<svg class="icon" aria-hidden="true"><use href="#i-${name}"/></svg>`;
@@ -20,7 +22,20 @@ function statusLabel(status){return core?core.statusLabel(status):'Not available
 function notify(message){$('toast').textContent=message;$('toast').hidden=false;clearTimeout(notify.timer);notify.timer=setTimeout(()=>$('toast').hidden=true,5000);}
 function changePage(){const page=['overview','baseline','device'].includes(location.hash.slice(1))?location.hash.slice(1):'overview';document.querySelectorAll('[data-view]').forEach(el=>el.hidden=el.dataset.view!==page);document.querySelectorAll('[data-page]').forEach(el=>{const active=el.dataset.page===page;el.classList.toggle('active',active);if(active)el.setAttribute('aria-current','page');else el.removeAttribute('aria-current');});const text={overview:['Patient overview','Patient overview','Live measurements and patient-specific context for clinical review.'],baseline:['Patient baseline','Patient baseline','Establish the patient’s usual ranges before comparing future readings.'],device:['Device & sensors','Patient device & sensors','Know what is connected, and what is actually measuring.']}[page];$('pageCrumb').textContent=text[0];$('pageTitle').textContent=text[1];$('pageDescription').textContent=text[2];document.title=`PulseCare · ${text[0]}`;if(page==='overview')drawChart();}
 function theme(mode){document.documentElement.dataset.theme=mode;$('themeToggle').innerHTML=icon(mode==='light'?'moon':'sun');$('themeToggle').setAttribute('aria-label',`Switch to ${mode==='light'?'dark':'light'} mode`);$('themeToggle').title=$('themeToggle').getAttribute('aria-label');drawChart();}
-function updateConnection(status){state.status=status||{};const online=status?.connected===true&&state.packet!==null;document.querySelectorAll('[data-connection-dot]').forEach(el=>el.classList.toggle('connected',online));$('connectionText').textContent=online?'Device connected':'Device offline';$('sidebarConnection').textContent=online?'ESP32-S3 connected':'Waiting for device';$('connectionMessage').hidden=online&&!status?.storage_error;if(!online)$('connectionMessage').textContent='Device disconnected. Reconnect the ESP32 by USB and keep the local bridge running.';else if(status?.storage_error)$('connectionMessage').textContent='The device is streaming, but recordings could not be saved. Check local disk space and restart the bridge.';$('enrollmentHint').textContent=online?'Use the device for this patient only during collection.':'Connect the patient’s device by USB to enable collection. Keep the local bridge running.';$('packetCounter').textContent=`${Number(status?.packets_received||0).toLocaleString()} packets received`;}
+function updateConnection(status){
+ state.status=status||{};const online=status?.connected===true&&state.packet!==null,simulated=status?.simulation===true;
+ document.querySelectorAll('[data-connection-dot]').forEach(el=>el.classList.toggle('connected',online));
+ $('connectionText').textContent=online?(simulated?'Simulation running':'Device connected'):(simulated?'Simulation paused':'Device offline');
+ $('sidebarConnection').textContent=simulated?'Simulated stream':online?'ESP32-S3 connected':'Waiting for device';
+ $('simulationNotice').hidden=!simulated;
+ if(simulated)$('simulationNotice').textContent=`Simulation · ${status.simulation_phase||'Starting'}. All readings are generated; no ESP32 is connected. Temporary demo history includes a one-minute pre-roll. Scenarios cycle automatically.`;
+ $('connectionMessage').hidden=online&&!status?.storage_error;
+ if(!online)$('connectionMessage').textContent=simulated?'The simulated stream has stopped. Restart the bridge with --simulate.':'Device disconnected. Reconnect the ESP32 by USB and keep the local bridge running.';
+ else if(status?.storage_error)$('connectionMessage').textContent='The device is streaming, but recordings could not be saved. Check local disk space and restart the bridge.';
+ $('enrollmentHint').textContent=simulated?'Demo enrollment uses generated readings in a temporary database.':online?'Use the device for this patient only during collection.':'Connect the patient’s device by USB to enable collection. Keep the local bridge running.';
+ $('packetCounter').textContent=`${Number(status?.packets_received||0).toLocaleString()} ${simulated?'simulated ':''}packets received`;
+ updateAssistantAvailability();
+}
 function renderEnvironment(){
   const p=state.packet;
   const assessment=core?core.temperatureAssessment(p):null;
@@ -56,7 +71,7 @@ function renderReadings(){const p=state.packet;for(const [key,meta] of Object.en
  renderHardware();renderReferenceTable();}
 function renderHardware(){const p=state.packet,s=p?.sensors||{};const sensors=[['max','Optical sensor','MAX30102 · pulse & oxygen','pulse'],['mpu','Motion sensor','MPU-compatible · acceleration','motion'],['tmp117','TMP117 sensor','TMP117 · actual sensor temperature; wrist contact unverified','temp']];const health=key=>p&&s[key]?core.sensorHealth(p,key):{status:'not_available',error:null};const status=key=>s[key]?(health(key).status==='valid'?'Connected':statusLabel(health(key).status)):['tmp117','max','mpu'].includes(key)?'Not connected':'Unavailable';$('hardwareSummary').innerHTML=sensors.map(([key,name,detail,glyph])=>`<div class="hardware-row ${s[key]?'':'missing'}" title="${esc(p&&s[key]?health(key).error||'':detail)}">${icon(glyph)}<span>${name}</span><span>${status(key)}</span></div>`).join('');$('nodeSummary').textContent=p?`${p.device_id} · ${s.oled?'display connected':'display unavailable'} · ${core.activeSensorCount(p)}/${core.ACTIVE_MAX} measurement sensors`:'ESP32-S3 · awaiting connection';
  $('sensorInventory').innerHTML=[...sensors,['oled','Device display','SSD1306 · on-device readings','device']].map(([key,name,detail])=>{const stateText=key==='oled'?(s.oled?'Responding':'Not connected'):status(key);const stateClass=key==='oled'?s.oled:s[key];return `<div class="inventory-row"><div><h3>${name}</h3><p>${detail}</p></div><span class="sensor-state ${stateClass?'':'missing'}">${stateText}</span></div>`;}).join('');
- $('deviceIdentity').textContent=p?.device_id||state.device||'Waiting for device identity';const mb=bytes=>finite(bytes)===null?'—':`${(bytes/1048576).toFixed(0)} MB`;const uptime=p?.uptime_s;const facts=[['Connection',state.status.connected?'USB serial · live':'Offline'],['Serial port',state.status.port||'—'],['Flash memory',mb(p?.board?.flash_bytes)],['PSRAM',mb(p?.board?.psram_bytes)],['Device uptime',finite(uptime)===null?'—':`${Math.floor(uptime/3600)}h ${Math.floor(uptime/60)%60}m ${uptime%60}s`],['Saved history','Up to 30 days on this computer']];if(state.status.error)facts.push(['Connection details',state.status.error]);$('deviceFacts').innerHTML=facts.map(([k,v])=>`<div><dt>${k}</dt><dd>${esc(v)}</dd></div>`).join('');}
+ $('deviceIdentity').textContent=p?.device_id||state.device||'Waiting for device identity';const mb=bytes=>finite(bytes)===null?'—':`${(bytes/1048576).toFixed(0)} MB`;const uptime=p?.uptime_s;const facts=[['Connection',state.status.simulation?'Synthetic simulation · no hardware':state.status.connected?'USB serial · live':'Offline'],['Serial port',state.status.port||'—'],['Flash memory',mb(p?.board?.flash_bytes)],['PSRAM',mb(p?.board?.psram_bytes)],['Device uptime',finite(uptime)===null?'—':`${Math.floor(uptime/3600)}h ${Math.floor(uptime/60)%60}m ${uptime%60}s`],['Saved history','Up to 30 days on this computer']];if(state.status.error)facts.push(['Connection details',state.status.error]);$('deviceFacts').innerHTML=facts.map(([k,v])=>`<div><dt>${k}</dt><dd>${esc(v)}</dd></div>`).join('');}
 function selectMetric(key){if(!metrics[key])return;state.selected=key;state.chartInspectionIndex=null;document.querySelectorAll('[data-metric]').forEach(el=>{let active=el.dataset.metric===key;el.classList.toggle('selected',active);el.setAttribute('aria-selected',String(active));});$('chartPanel').setAttribute('aria-labelledby','tab-'+key);$('chartTitle').textContent=metrics[key].label;$('chartUnit').textContent=metrics[key].label.includes('°C')?'':metrics[key].unit;$('signalContext').textContent=metrics[key].context;$('seriesDot').style.background=`var(${metrics[key].color})`;document.querySelector('.legend-line').style.background=`var(${metrics[key].color})`;drawChart();}
 async function fetchHistory(){const request=++state.historyRequest;try{const params=new URLSearchParams({seconds:state.range});if(state.device)params.set('device_id',state.device);const response=await fetch('/api/history?'+params);if(!response.ok)throw Error('History unavailable');const data=await response.json();if(request!==state.historyRequest)return;state.history=data.points||[];$('chartResolution').textContent=`${data.bucket_seconds===1?'1 sec':data.bucket_seconds+' sec'} averages · local history`;drawChart();}catch(error){if(request===state.historyRequest){$('chartResolution').textContent='History connection unavailable';}}}
 function drawChart(){const svg=$('trendChart');if(!svg)return;const key=state.selected,meta=metrics[key],points=state.history,valid=points.filter(p=>core.finite(p[key])!==null);const style=getComputedStyle(document.documentElement),color=style.getPropertyValue(meta.color).trim(),line=style.getPropertyValue('--line').trim(),muted=style.getPropertyValue('--muted').trim(),band=style.getPropertyValue('--green-light').trim();
@@ -77,26 +92,71 @@ function renderReferenceTable(){const labels={unavailable:'No live reading',coll
 async function fetchBaseline(){try{const q=state.device?'?device_id='+encodeURIComponent(state.device):'';const r=await fetch('/api/baseline'+q);if(!r.ok)throw Error();state.baseline=await r.json();$('enrollmentDescription').textContent='Compare future readings with patterns recorded for one patient.';renderBaseline();const events=await fetch('/api/events'+q);if(events.ok){state.events=(await events.json()).events||[];renderEvents();renderReview();}}catch(e){$('enrollmentDescription').textContent='Baseline service is unavailable. Keep the local bridge running and retry.';}}
 function renderEvents(){$('eventCount').textContent=`${state.events.length} ${state.events.length===1?'event':'events'}`;if(!state.events.length){$('observationList').innerHTML=`<div class="empty-observations"><span class="empty-observation-icon">${icon('clock')}</span><div><strong>No observations recorded yet</strong><p>New device alerts and baseline departures will appear here.</p></div></div>`;return;}$('observationList').innerHTML=state.events.slice(0,4).map(e=>`<article class="observation">${icon(e.kind==='collection'?'baseline':'info')}<div><strong>${e.kind==='review'?'Clinician review recorded':e.kind==='collection'?'Baseline collection started':e.kind==='sos'?'SOS button activated':e.kind==='fall'?'Possible fall reported':'Personal-range departure'}</strong><p>${esc(e.detail)}</p></div><time datetime="${new Date(e.recorded_at*1000).toISOString()}">${dateLabel(e.recorded_at)} · ${timeLabel(e.recorded_at)}</time></article>`).join('');}
 async function enrollment(action,person){const r=await fetch('/api/baseline',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action,person,device_id:state.device})});const body=await r.json();if(!r.ok)throw Error(body.error||'Could not update the baseline.');state.baseline=body;renderBaseline();fetchBaseline();}
-function consume(payload){const p=payload.telemetry;if(payload.status?.connected&&p&&p.device_id&&p.vitals&&p.sensors){if(p._received_at!==state.lastPacket){state.lastPacket=p._received_at;state.packet=p;state.lastReceived=p._received_at*1000||Date.now();state.device=p.device_id;state.comparisons=payload.comparisons||{};renderReadings();}updateConnection(payload.status);}else{state.packet=null;state.comparisons={};updateConnection(payload.status);renderReadings();}$('startBaseline').disabled=!state.status.connected;}
-function startStream(){const stream=new EventSource('/api/stream');stream.onmessage=e=>{try{consume(JSON.parse(e.data));}catch(error){console.warn('Invalid telemetry event',error);}};stream.onerror=()=>{state.packet=null;state.comparisons={};updateConnection({connected:false,packets_received:state.status.packets_received,error:'The local bridge is unavailable. Start telemetry_bridge.py and keep the ESP32 connected.'});renderReadings();};}
+function consume(payload){const p=payload.telemetry;if(payload.status?.connected&&p&&p.device_id&&p.vitals&&p.sensors){if(p._received_at!==state.lastPacket){const changed=state.device!==p.device_id;state.lastPacket=p._received_at;state.packet=p;state.lastReceived=p._received_at*1000||Date.now();state.device=p.device_id;state.comparisons=payload.comparisons||{};if(changed){state.care={incidents:[],review:null};fetchCare();fetchBaseline();}renderReadings();}updateConnection(payload.status);}else{state.packet=null;state.comparisons={};updateConnection(payload.status);renderReadings();}renderOptical(payload.status?.connected&&payload.optical?.device_id===p?.device_id?payload.optical:null);renderPriority(payload.priority);renderIncidents();$('startBaseline').disabled=!state.status.connected;}
+function startStream(){const stream=new EventSource('/api/stream');stream.onmessage=e=>{try{consume(JSON.parse(e.data));}catch(error){console.warn('Invalid telemetry event',error);}};stream.onerror=()=>{state.packet=null;state.comparisons={};updateConnection({connected:false,packets_received:state.status.packets_received,error:'The local bridge is unavailable. Start telemetry_bridge.py and keep the ESP32 connected.'});renderReadings();renderOptical(null);renderPriority(null);renderIncidents();};}
 $('today').textContent=new Date().toLocaleDateString([],{weekday:'short',month:'short',day:'numeric'});let savedTheme;try{savedTheme=localStorage.getItem('pulsecare-theme');}catch(e){}theme(savedTheme==='dark'?'dark':'light');$('themeToggle').addEventListener('click',()=>{const mode=document.documentElement.dataset.theme==='light'?'dark':'light';theme(mode);try{localStorage.setItem('pulsecare-theme',mode);}catch(e){}});
 document.querySelectorAll('[data-metric]').forEach(el=>{el.addEventListener('click',()=>selectMetric(el.dataset.metric));el.addEventListener('keydown',e=>{if(!['ArrowLeft','ArrowRight'].includes(e.key))return;e.preventDefault();const tabs=[...document.querySelectorAll('[data-metric]')];const next=tabs[(tabs.indexOf(el)+(e.key==='ArrowRight'?1:-1)+tabs.length)%tabs.length];next.focus();selectMetric(next.dataset.metric);});});document.querySelectorAll('[data-range]').forEach(el=>el.addEventListener('click',()=>{state.range=Number(el.dataset.range);document.querySelectorAll('[data-range]').forEach(btn=>{const active=btn===el;btn.classList.toggle('active',active);btn.setAttribute('aria-pressed',String(active));});fetchHistory();}));$('trendChart').addEventListener('pointermove',e=>inspectChart(e.clientX));$('trendChart').addEventListener('pointerleave',()=>{$('chartTooltip').hidden=true;$('chartCursor')?.setAttribute('visibility','hidden');});$('openBaseline').addEventListener('click',()=>location.hash='baseline');window.addEventListener('hashchange',changePage);window.addEventListener('resize',drawChart);
 $('enrollmentForm').addEventListener('submit',async e=>{e.preventDefault();$('enrollmentError').hidden=true;$('startBaseline').disabled=true;try{await enrollment('start',$('personName').value);notify('Patient baseline started. Use this device for the enrolled patient.');}catch(error){$('enrollmentError').textContent=error.message;$('enrollmentError').hidden=false;}finally{$('startBaseline').disabled=!state.status.connected;}});$('endEnrollment').addEventListener('click',async()=>{if(!confirm('End this person’s baseline collection? Their saved recordings are kept. A new wearer starts with a separate reference.'))return;try{await enrollment('end');notify('Collection ended. You can now enroll another wearer.');}catch(e){notify(e.message);}});
 $('exportButton').addEventListener('click',()=>{const rows=state.history.filter(p=>p.samples);if(!rows.length){notify('There are no recorded samples in this time window yet.');return;}const csv=core.csv(rows);const link=document.createElement('a');link.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));link.download=`pulsecare-${new Date().toISOString().slice(0,10)}.csv`;link.click();setTimeout(()=>URL.revokeObjectURL(link.href),1000);notify('Exported valid recorded averages; gaps are left blank.');});
-changePage();selectMetric('motion_g');renderReadings();renderBaseline();fetchHistory();fetchBaseline();startStream();setInterval(fetchHistory,5000);setInterval(fetchBaseline,15000);setInterval(()=>{if(state.packet&&Date.now()-state.lastReceived>5000){state.packet=null;state.comparisons={};updateConnection({...state.status,connected:false,error:'No fresh packet for five seconds. Check the USB connection.'});renderReadings();}},1000);
+changePage();selectMetric('motion_g');renderReadings();renderBaseline();fetchHistory();fetchBaseline();startStream();setInterval(fetchHistory,5000);setInterval(fetchBaseline,15000);setInterval(()=>{if(state.packet&&Date.now()-state.lastReceived>5000){state.packet=null;state.comparisons={};updateConnection({...state.status,connected:false,error:'No fresh packet for five seconds. Check the USB connection.'});renderReadings();renderOptical(null);renderPriority(null);renderIncidents();}},1000);
 
 function renderReview(){
  const enrolled=Boolean(state.baseline.id);$('saveReview').disabled=!enrolled;
- let latest;try{latest=JSON.parse(localStorage.getItem('pulsecare-review-'+state.baseline.id)||'null');}catch(error){}
+ const latest=state.care.review?.enrollment_id===state.baseline.id?state.care.review:null;
  $('reviewStatus').textContent=latest?'Reviewed '+dateLabel(latest.recorded_at):'Not reviewed';
- $('reviewHint').textContent=latest?latest.detail:enrolled?'Review notes are saved in this browser for the enrolled patient.':'Enroll the patient baseline to associate reviews with the correct patient.';
+ $('reviewHint').textContent=latest?`${latest.author} · ${latest.decision.replaceAll('_',' ')}${latest.note?' · '+latest.note:''}`:enrolled?'Reviews are saved locally with this patient’s record.':'Enroll the patient baseline to associate reviews with the correct patient.';
 }
 $('reviewForm').addEventListener('submit',async e=>{
  e.preventDefault();$('reviewError').hidden=true;$('saveReview').disabled=true;
- try{if(!state.baseline.id)throw Error('Enroll the patient before recording a review.');const outcome=$('reviewDecision').selectedOptions[0].textContent,note=$('reviewNote').value.trim();localStorage.setItem('pulsecare-review-'+state.baseline.id,JSON.stringify({recorded_at:Date.now()/1000,detail:outcome+(note?' · '+note:''),decision:$('reviewDecision').value}));$('reviewNote').value='';notify('Review saved in this browser.');}
- catch(error){$('reviewError').textContent=error.name==='QuotaExceededError'?'Browser storage is full. Free space and try again.':error.message;$('reviewError').hidden=false;}
+ try{if(!state.baseline.id)throw Error('Enroll the patient before recording a review.');state.care=await postCare('/api/reviews',{enrollment_id:state.baseline.id,author:$('reviewAuthor').value.trim(),decision:$('reviewDecision').value,note:$('reviewNote').value.trim()});$('reviewNote').value='';notify('Review saved with the patient record.');fetchBaseline();}
+ catch(error){$('reviewError').textContent=error.message;$('reviewError').hidden=false;}
  finally{renderReview();}
 });
+
+function renderOptical(result){
+ const rows=Array.isArray(result?.waveform)?result.waveform.filter(r=>Array.isArray(r)&&r.length===3&&r.every(Number.isFinite)).slice(-250):[];
+ for(const [id,column,center] of [['opticalRed',1,45],['opticalIr',2,120]]){
+  const values=rows.map(r=>r[column]),low=values.length?Math.min(...values):0,span=values.length?Math.max(1,Math.max(...values)-low):1;
+  $(id).setAttribute('d',values.map((v,i)=>`${i?'L':'M'}${(10+i/249*780).toFixed(2)},${(center+27-(v-low)/span*54).toFixed(2)}`).join(''));
+ }
+ $('opticalWaveform').setAttribute('aria-label',rows.length?`${rows.length} recorded red and infrared optical samples; independently scaled traces`:'No continuous optical waveform available');
+ $('opticalCoverage').textContent=`${rows.length} of 250 samples · 25 samples/sec`;
+ const prediction=result?.status==='prediction'&&Number.isFinite(result.score);
+ $('opticalLabel').textContent=prediction?(result.label==='usable'?'Usable waveform':'Unreliable waveform'):result?.status==='model_missing'?'Model unavailable':rows.length?'Collecting waveform':'Waiting for samples';
+ $('opticalMessage').textContent=result?.recording_error?'Recording could not be saved. Check local storage before continuing.':result?.model_error?'The quality model could not load. Restart the bridge after checking the model file.':prediction?`${Math.round(result.score*100)}% usable-class model score · waveform classification only`:rows.length?result.message:'Waiting for continuous optical samples.';
+ $('opticalModelNote').textContent=prediction?`${result.domain} · ${result.model_version}. ${result.domain?.includes('smartphone')?'Validation on this MAX30102 is pending. ':''}Predictions are shown for comparison; measured values are unchanged.`:'Quality predictions support signal review. They do not establish measurement accuracy.';
+ if(result?.recording)$('opticalCoverage').textContent+=' · Recording';
+}
+function renderPriority(result){
+ const zone=['green','yellow','red'].includes(result?.zone)?result.zone:'unknown';
+ $('priorityZone').dataset.zone=zone;$('priorityZone').textContent=zone[0].toUpperCase()+zone.slice(1);
+ $('priorityMessage').textContent=result?.message||'Waiting for usable measurements.';
+ $('priorityEvidence').textContent=result?.source==='device_alert'?'Device alert · independent of model inference':result?.model_error?'Trained model unavailable. Check the bridge configuration.':`${Number(result?.observations||0)} / 60 observations${result?.source==='trained_model'?' · Synthetic-policy model':''}`;
+}
+async function postCare(path,payload){
+ const response=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...payload,device_id:state.device})});
+ const body=await response.json();if(!response.ok)throw Error(body.error||'Could not save. Keep the bridge running and retry.');return body;
+}
+async function fetchCare(){
+ if(!state.device)return;
+ const device=state.device;
+ try{const response=await fetch('/api/care?device_id='+encodeURIComponent(device));if(!response.ok)throw Error();const body=await response.json();if(device!==state.device)return;state.care=body;renderIncidents();renderReview();}
+ catch(error){$('incidentList').textContent='Incident records are unavailable. Keep the local bridge running and retry.';}
+}
+function renderIncidents(){
+ const incidents=(state.care.incidents||[]).filter(i=>i.status!=='resolved');
+ $('incidentList').innerHTML=incidents.length?incidents.map(i=>`<article class="incident-row"><div><strong>${i.kind==='sos'?'SOS button activated':'Possible fall reported'}</strong><p>${esc(dateLabel(i.created_at)+' · '+timeLabel(i.created_at))} · ${i.status==='acknowledged'?'Acknowledged by '+esc(i.acknowledged_by):'Awaiting acknowledgement'}${i.enrollment_id!==state.baseline.id?' · Recorded before this enrollment':''}</p></div><button class="button" data-incident="${esc(i.id)}" data-action="${i.status==='open'?'acknowledge':'resolve'}">${i.status==='open'?'Acknowledge':'Mark resolved'}</button></article>`).join(''):'<p>No unresolved incidents recorded.</p>';
+ if(incidents.length&&!state.packet?.alerts?.sos&&!state.packet?.alerts?.fall){$('emergencyAlert').hidden=false;$('emergencyAlert').textContent=`${incidents.length} unresolved SOS or fall ${incidents.length===1?'incident needs':'incidents need'} review. See incidents below.`;}
+ else if(!incidents.length&&!state.packet?.alerts?.sos&&!state.packet?.alerts?.fall){$('emergencyAlert').hidden=true;}
+}
+$('incidentList').addEventListener('click',async event=>{
+ const button=event.target.closest('button[data-incident]');if(!button)return;
+ const author=$('reviewAuthor').value.trim();if(!author){$('reviewAuthor').focus();notify('Enter your name or alias in the review form before updating an incident.');return;}
+ button.disabled=true;
+ try{state.care=await postCare('/api/incidents',{incident_id:button.dataset.incident,action:button.dataset.action,author});renderIncidents();notify('Incident updated.');}
+ catch(error){notify(error.message);button.disabled=false;}
+});
+setInterval(fetchCare,3000);
 
 $('trendChart').addEventListener('keydown',event=>{
  if(!['ArrowLeft','ArrowRight','Home','End'].includes(event.key))return;
@@ -110,3 +170,66 @@ $('trendChart').addEventListener('keydown',event=>{
  state.chartInspectionIndex=index;
  inspectChart($('trendChart').getBoundingClientRect().left+state.chartBounds.x(points[index].time));
 });
+
+function updateAssistantAvailability(){
+ const changed=assistant.device!==null&&(assistant.device!==state.device||assistant.enrollment!==(state.baseline.id||null));
+ if(changed){assistant.request++;assistant.job=null;assistant.busy=false;assistant.device=null;$('assistantNarrative').hidden=true;$('assistantDraft').hidden=true;$('assistantDetails').hidden=true;$('assistantAssessment').hidden=true;resetSymptoms();$('assistantStatus').textContent='Patient context changed. Generate a new interpretation.';}
+ $('generateSummary').disabled=!assistant.enabled||assistant.busy||!state.packet;
+}
+function renderAssistantJob(job){
+ $('assistantStatus').textContent=job.status==='queued'?'Queued for local inference…':job.status==='running'?(job.stage||'Preparing summary…'):job.message||'Summary finished.';
+ $('assistantDraft').hidden=job.status!=='complete';$('assistantDraft').textContent=job.status==='complete'?job.summary:'';
+ $('assistantNarrative').hidden=job.status!=='complete';
+ renderAssessment(job.assessment,job.simulation);
+ $('assistantDetails').hidden=!job.assessment;
+ $('symptomEmergency').hidden=job.assessment?.level==='emergency'||!hasEmergencySymptoms();
+ const captured=new Date(job.captured_at).getTime()/1000;
+ $('assistantProvenance').textContent=`Captured ${dateLabel(captured)} ${timeLabel(captured)} · ${job.model}${job.simulation?' · Simulated readings':''}. This snapshot does not replace the current alert above.`;
+ const route=job.routing,ground=job.grounding;
+ const score=d=>typeof d?.confidence==='number'?` (${Math.round(d.confidence*100)}% model score)`:'', result=d=>d?.abstained?'abstained':d?.value||'pending';
+ $('assistantDecisions').textContent=`Jeff selected: ${job.tool||result(route)}${score(route)}. Evidence check: ${result(ground)}${score(ground)}. These scores are not medical probabilities.`;
+ $('assistantEvidence').textContent=job.source_evidence?JSON.stringify(job.source_evidence,null,2):'Evidence will appear after routing.';
+}
+async function loadAssistant(){
+ try{const response=await fetch('/api/assistant');if(!response.ok)throw Error();const result=await response.json();assistant.enabled=result.enabled===true;$('assistantModel').textContent=result.model?`${result.model} + Jeff`:'AI summaries disabled';$('assistantStatus').textContent=assistant.enabled?'Ready. The first request may take longer while Jeff loads on the CPU.':'AI summaries are disabled in the bridge.';}
+ catch(error){$('assistantStatus').textContent='The summary service is unavailable. Keep the local bridge running.';}
+ updateAssistantAvailability();
+}
+$('assistantForm').addEventListener('submit',async event=>{
+ event.preventDefault();if(assistant.busy||!state.device)return;
+ assistant.busy=true;assistant.device=state.device;assistant.enrollment=state.baseline.id||null;const request=++assistant.request;
+ $('assistantNarrative').hidden=true;$('assistantDraft').hidden=true;$('assistantDetails').hidden=true;$('assistantStatus').textContent='Capturing the current evidence…';updateAssistantAvailability();
+ try{
+  const response=await fetch('/api/assistant',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({device_id:state.device,question:$('assistantQuestion').value.trim(),symptoms:readSymptoms()})});
+  let job=await response.json();if(!response.ok)throw Error(job.error||'Could not request a summary.');assistant.job=job.id;
+  while(request===assistant.request){
+   renderAssistantJob(job);if(!['queued','running'].includes(job.status))break;
+   await new Promise(resolve=>setTimeout(resolve,1200));if(request!==assistant.request)break;
+   const poll=await fetch('/api/assistant/job?id='+encodeURIComponent(job.id));job=await poll.json();if(!poll.ok)throw Error(job.error||'Could not read summary progress.');
+  }
+ }catch(error){if(request===assistant.request){$('assistantStatus').textContent=error.message;$('assistantNarrative').hidden=true;$('assistantDraft').hidden=true;}}
+ finally{if(request===assistant.request){assistant.busy=false;updateAssistantAvailability();}}
+});
+loadAssistant();setInterval(updateAssistantAvailability,1000);
+
+function readSymptoms(){return {status:$('symptomStatus').value,selected:$('symptomStatus').value==='reported'?[...$('symptomChoices').querySelectorAll('input:checked')].map(el=>el.value):[]};}
+function hasEmergencySymptoms(){const selected=readSymptoms().selected;return selected.some(s=>['severe_breathing','chest_pressure','confusion','blue_lips'].includes(s))||(selected.includes('palpitations')&&selected.includes('breathless'));}
+function resetSymptoms(){$('symptomStatus').value='unknown';$('symptomChoices').querySelectorAll('input').forEach(el=>el.checked=false);$('symptomChoices').disabled=true;$('symptomChoices').hidden=true;$('symptomEmergency').hidden=true;}
+function symptomsChanged(){
+ const reported=$('symptomStatus').value==='reported';$('symptomChoices').disabled=!reported;$('symptomChoices').hidden=!reported;
+ if(!reported)$('symptomChoices').querySelectorAll('input').forEach(el=>el.checked=false);
+ const urgent=hasEmergencySymptoms();
+ $('symptomEmergency').hidden=!urgent;
+ assistant.request++;assistant.busy=false;assistant.job=null;$('assistantNarrative').hidden=true;$('assistantDraft').hidden=true;$('assistantDetails').hidden=true;$('assistantDetails').open=false;$('assistantAssessment').hidden=true;
+ $('assistantStatus').textContent='Symptoms changed. Generate a new interpretation.';updateAssistantAvailability();
+}
+function renderAssessment(assessment,simulation){
+ $('assistantAssessment').hidden=!assessment;if(!assessment)return;
+ $('assistantAssessment').dataset.level=assessment.level;$('assistantCareTitle').textContent=(simulation?'Simulated scenario · ':'')+assessment.title;
+ $('assistantCareReason').textContent=assessment.reason;$('assistantCareAction').textContent=assessment.action;
+ $('assistantPossibilities').replaceChildren(...(assessment.possible_explanations||[]).map(text=>{const li=document.createElement('li');li.textContent=text;return li;}));
+ $('assistantMissing').textContent=(assessment.missing_information||[]).join(' ');$('assistantAssessmentSource').textContent=assessment.provenance;
+ $('assistantSources').replaceChildren(document.createTextNode('Sources: '));
+ (assessment.sources||[]).forEach((source,index)=>{if(index)$('assistantSources').append(document.createTextNode(' · '));const link=document.createElement('a');link.textContent=source.title;link.href=source.url;link.target='_blank';link.rel='noopener noreferrer';$('assistantSources').append(link);});
+}
+$('symptomStatus').addEventListener('change',symptomsChanged);$('symptomChoices').addEventListener('change',symptomsChanged);

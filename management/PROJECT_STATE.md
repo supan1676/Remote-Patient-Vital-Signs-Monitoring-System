@@ -1,4 +1,8 @@
 # PROJECT STATE — Remote Patient Vital Signs Monitoring System
+> Current software update: 2026-11-11. See [the implementation/run instructions](../YOU_DO_NEXT.md)
+> and [model evidence](../models/README.md). The state grid below is historical
+> evidence from November 2, superseded for optics by the November 3 repair report.
+> No physical validation of firmware rpm-2.2.0 has been performed.
 > Audit & Engineering Evidence Baseline: 2026-11-02
 
 ---

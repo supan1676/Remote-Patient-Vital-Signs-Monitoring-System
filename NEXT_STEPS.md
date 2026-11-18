@@ -1,5 +1,8 @@
 # Next Steps
 
+> For the current 2026-11-11 implementation, follow [YOU_DO_NEXT.md](YOU_DO_NEXT.md).
+> The audit and release notes below describe the older October checkout.
+
 - Audit date: 2026-10-28
 - Branch / HEAD: `main` / `f67c13a`
 - Current state: software tests and both PlatformIO builds pass; the working tree

@@ -1,5 +1,48 @@
 # RPM IoMT Patient Monitoring Node
 
+**Software update — 2026-11-11:** firmware `rpm-2.2.0` adds full-rate optical
+recording and nonblocking temperature/motion recovery. The host includes a
+trained Random Forest quality model, waveform display, persistent incidents,
+SQLite review notes, and optional authenticated HTTPS access. The model is
+currently a public-smartphone-data research comparison, awaiting MAX30102
+validation. Start with [the hands-on steps](YOU_DO_NEXT.md) and
+[the model card](models/README.md). The updated firmware was compiled; no USB
+ESP32 was available to flash or physically verify this version.
+
+A separate **green/yellow/red alert-priority model** is now trained and integrated
+into the dashboard. It uses one million generated one-minute HR/SpO2/movement
+scenarios and reports Unknown when evidence is insufficient. Its 0.999202
+held-out macro-F1 measures agreement with synthetic labeling rules, not medical
+accuracy. See [the model card and reproducible commands](models/ALERT_PRIORITY_MODEL.md)
+or [open the interactive synthetic demo](models/alert_priority.demo.html).
+
+To run the live dashboard **without the ESP32**, use:
+
+```bash
+.venv/bin/python telemetry_bridge.py --simulate
+```
+
+Open <http://localhost:8080/index.html>. Simulation streams one generated packet
+per second and 25 optical samples per second. It cycles through steady readings,
+yellow/red patterns, recovery, missing pulse data and SOS over about five minutes.
+The real trained models run on the generated inputs. A visible notice identifies
+simulation mode; its in-memory history, demo enrollment and reviews disappear
+when stopped. A disclosed one-minute synthetic pre-roll supplies initial chart
+history and a model result. No serial port is opened and no patient database or
+PPG training recording is written. Stop with Ctrl+C; omit `--simulate` for hardware.
+
+The **Health interpretation** panel uses local **Qwen3 1.7B** to explain possible
+meanings and actual **Jeff** adapters to select evidence and check the draft.
+Add reported symptoms to see general next-step guidance and bounded possible
+explanations. Severe-symptom warnings do not wait for AI. Every result states
+that this is not a final medical evaluation; the app does not predict which
+illness a person probably has. See [interpretation scope and sources](management/HEALTH_INTERPRETATION.md).
+The application labels simulated data, shows capture time and source evidence,
+and withholds failed AI checks. These models do not change priority colors or
+acknowledge incidents. See [AI setup](management/JEFF_LLM_INTEGRATION.md)
+for the separate Jeff environment and model download commands. Use
+`--no-assistant` to disable summaries; the default model is `qwen3:1.7b`.
+
 ESP32-S3 firmware, a local serial/HTTP bridge, SQLite history, a patient baseline
 and a browser dashboard for a remote-monitoring prototype.
 
@@ -228,10 +271,10 @@ stream, SQLite history, baseline and event APIs. It binds to `127.0.0.1` only.
 - CSV export contains the active metrics; missing values are blank.
 - `data/telemetry.sqlite3` is local, additive in schema, and pruned after 30 days.
   It is excluded from source control.
-- The seven-day baseline requires four active metrics and at least 30 distinct
+- Each baseline metric independently requires seven days with at least 30 distinct
   sampled minutes per day. While wrist contact remains unverified, wrist values
-  are not stored, so the baseline cannot qualify; this is intentional rather than
-  a fabricated data path. Wrist skin temperature is baseline context, never a
+  are not stored, so that metric cannot qualify; other metrics can become ready.
+  Wrist skin temperature is baseline context, never a
   core-temperature estimate.
 
 ## Calibration and physical-validation status
@@ -256,12 +299,12 @@ six-face accelerometer calibration and is not a clinical motion validation.
 ## Tests executed
 
 ```bash
-python -m pytest -q
-# 62 passed
+.venv/bin/python -m pytest -q
+# 80 passed, 5 subtests passed (HTTP checks require localhost sockets)
 
 node --check assets/dashboard.js
 node --check assets/dashboard_core.js
-node --test tests/dashboard_core.test.js
+node tests/dashboard_core.test.js
 # 10 passed
 
 python -m py_compile temperature_safety.py telemetry_bridge.py \

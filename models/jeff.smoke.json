@@ -1,0 +1,79 @@
+{
+  "routing": {
+    "value": "t2",
+    "confidence": 0.9661003057910342,
+    "abstained": false,
+    "calibrated": true,
+    "interface": "route",
+    "function": "jeff.routing.tools.tool",
+    "version": "1.4.0",
+    "probabilities": {
+      "answer_directly": 0.00046671419182626447,
+      "ask_user": 0.031117410328461298,
+      "t1": 0.0011944692879302208,
+      "t2": 0.9661003057910342,
+      "t3": 0.0008400895557947438,
+      "t4": 0.00028101084495320386
+    },
+    "score": null,
+    "route": [],
+    "decided_by": "jeff.routing.tools.tool@1.4.0",
+    "escalations": [],
+    "timing": {
+      "path": "standard",
+      "model_ms": 2358.414,
+      "format": "bf16"
+    },
+    "evidence_refs": []
+  },
+  "supported": {
+    "value": "supported",
+    "confidence": 0.9941746688583514,
+    "abstained": false,
+    "calibrated": true,
+    "interface": "is_supported",
+    "function": "jeff.retrieval.ground.grounding",
+    "version": "1.4.0",
+    "probabilities": {
+      "supported": 0.9941746688583514,
+      "partly_supported": 0.0037611774532331304,
+      "contradicted": 0.0014630934597734313,
+      "unsupported": 0.0006010602286420761
+    },
+    "score": null,
+    "route": [],
+    "decided_by": "jeff.retrieval.ground.grounding@1.4.0",
+    "escalations": [],
+    "timing": {
+      "path": "standard",
+      "model_ms": 1712.764,
+      "format": "bf16"
+    },
+    "evidence_refs": []
+  },
+  "contradicted": {
+    "value": "contradicted",
+    "confidence": 0.9991315895995854,
+    "abstained": false,
+    "calibrated": true,
+    "interface": "is_supported",
+    "function": "jeff.retrieval.ground.grounding",
+    "version": "1.4.0",
+    "probabilities": {
+      "supported": 0.00025018184575836675,
+      "partly_supported": 0.00018509847186952479,
+      "contradicted": 0.9991315895995854,
+      "unsupported": 0.00043313008278672636
+    },
+    "score": null,
+    "route": [],
+    "decided_by": "jeff.retrieval.ground.grounding@1.4.0",
+    "escalations": [],
+    "timing": {
+      "path": "standard",
+      "model_ms": 1791.48,
+      "format": "bf16"
+    },
+    "evidence_refs": []
+  }
+}

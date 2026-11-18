@@ -51,7 +51,13 @@
     <main id="main" tabindex="-1">
       <div class="page-heading"><div><h1 id="pageTitle">Patient overview</h1><p id="pageDescription">Live measurements and patient-specific context for clinical review.</p></div><div class="connection-badge" id="connectionBadge"><span class="connection-dot" data-connection-dot></span><span id="connectionText">Waiting for device</span></div></div>
       <div class="connection-message" id="connectionMessage" role="status" hidden></div>
+      <div class="connection-message" id="simulationNotice" role="status" hidden></div>
       <div class="alert-banner" id="emergencyAlert" role="alert" hidden></div>
+      <section class="panel priority-panel" aria-labelledby="priorityTitle">
+        <div class="panel-heading"><div><h2 id="priorityTitle">Alert priority</h2><p>Heart rate, oxygen saturation and movement over the past minute.</p></div><span class="quiet-tag">Synthetic training</span></div>
+        <div class="priority-body"><strong id="priorityZone" class="priority-zone" data-zone="unknown" role="status">Unknown</strong><div><p id="priorityMessage">Waiting for usable measurements.</p><p id="priorityEvidence" class="field-hint">0 / 60 observations</p></div></div>
+        <p class="priority-limitation">Prototype trained on generated scenarios. Green does not establish medical safety.</p>
+      </section>
 
       <section data-view="overview" aria-label="Patient overview">
         <div class="overview-grid">
@@ -103,13 +109,61 @@
           </aside>
         </div>
 
+        <section class="panel optical-panel" aria-labelledby="opticalTitle">
+          <div class="panel-heading"><div><h2 id="opticalTitle">Pulse signal quality</h2><p>Inspect the recorded waveform before interpreting a pulse estimate.</p></div><span class="quiet-tag" id="opticalLabel">Waiting for samples</span></div>
+          <div class="optical-body">
+            <svg id="opticalWaveform" viewBox="0 0 800 160" preserveAspectRatio="none" role="img" aria-label="No continuous optical waveform available"><path id="opticalRed" fill="none" stroke="currentColor" stroke-width="1.6"/><path id="opticalIr" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>
+            <div class="optical-legend"><span>Red channel</span><span>Infrared channel</span><span id="opticalCoverage">0 of 250 samples</span></div>
+            <p id="opticalMessage" role="status">Waiting for continuous optical samples.</p>
+            <p id="opticalModelNote" class="field-hint">Quality predictions support signal review. They do not establish measurement accuracy.</p>
+          </div>
+        </section>
+        <section class="panel assistant-panel" aria-labelledby="assistantTitle">
+          <div class="panel-heading"><div><h2 id="assistantTitle">Health interpretation</h2><p>Possible explanations and next steps, using readings and reported symptoms.</p></div><span class="quiet-tag" id="assistantModel">Local Qwen + Jeff</span></div>
+          <div class="assistant-body">
+            <form id="assistantForm">
+              <label for="symptomStatus">Have symptoms been reported?</label>
+              <select id="symptomStatus"><option value="unknown">Not yet asked</option><option value="none_reported">No symptoms reported</option><option value="reported">Symptoms reported — select below</option></select>
+              <fieldset id="symptomChoices" class="assistant-symptoms" disabled hidden><legend>Reported symptoms</legend>
+                <label><input type="checkbox" value="cough">Cough</label>
+                <label><input type="checkbox" value="feverish">Feeling feverish — reported, not measured</label>
+                <label><input type="checkbox" value="breathless">New or worse shortness of breath</label>
+                <label><input type="checkbox" value="palpitations">Racing or irregular heartbeat sensation</label>
+                <label><input type="checkbox" value="very_unwell">Feeling very unwell or worsening</label>
+                <label><input type="checkbox" value="severe_breathing">Severe breathing difficulty / trouble speaking</label>
+                <label><input type="checkbox" value="chest_pressure">Tight or heavy chest</label>
+                <label><input type="checkbox" value="confusion">Sudden confusion</label>
+                <label><input type="checkbox" value="blue_lips">Blue or grey lips or skin</label>
+              </fieldset>
+              <p id="symptomEmergency" class="assistant-emergency" role="alert" hidden>Severe symptoms reported. Seek emergency help now using your local emergency number. Do not wait for this app or the AI response, even if the displayed alert is green.</p>
+              <label for="assistantQuestion">What would you like explained?</label>
+              <div class="form-row"><input id="assistantQuestion" maxlength="500" required value="Interpret the latest readings and symptoms." autocomplete="off"><button class="button primary" id="generateSummary" type="submit" disabled>Explain and advise</button></div>
+            </form>
+            <p id="assistantStatus" class="field-hint" role="status">Checking local summary service…</p>
+            <div id="assistantAssessment" class="assistant-assessment" hidden>
+              <h3 id="assistantCareTitle"></h3><p id="assistantCareAction"></p>
+            </div>
+            <div id="assistantNarrative" class="assistant-narrative" hidden><h3>AI explanation</h3><p id="assistantDraft" class="assistant-draft" hidden></p></div>
+            <details id="assistantDetails" hidden><summary>Evidence and sources</summary>
+              <p id="assistantCareReason"></p><ul id="assistantPossibilities"></ul>
+              <p id="assistantMissing" class="field-hint"></p><p id="assistantAssessmentSource" class="field-hint"></p>
+              <p id="assistantSources" class="field-hint"></p>
+              <p id="assistantProvenance" class="field-hint"></p><p id="assistantDecisions" class="field-hint"></p><pre id="assistantEvidence"></pre>
+            </details>
+            <p id="assistantDisclaimer" class="assistant-disclaimer">This is not a final medical evaluation or diagnosis. Consult a qualified healthcare professional for assessment.</p>
+          </div>
+        </section>
+        <section class="panel incident-panel" aria-labelledby="incidentTitle">
+          <div class="panel-heading"><div><h2 id="incidentTitle">Incidents needing attention</h2><p>SOS and possible fall incidents remain here until acknowledged and resolved.</p></div></div>
+          <div id="incidentList" class="incident-list"><p>No unresolved incidents recorded.</p></div>
+        </section>
         <div class="lower-grid">
           <section class="observations-panel panel"><div class="panel-heading"><div><h2>Items for clinical review</h2><p>Device alerts and changes from the patient’s reference</p></div><span class="quiet-tag" id="eventCount">0 events</span></div><div id="observationList" class="observation-list"><div class="empty-observations"><span class="empty-observation-icon"><svg class="icon"><use href="#i-clock"/></svg></span><div><strong>No observations recorded yet</strong><p>New device alerts and baseline departures will appear here.</p></div></div></div></section>
           <section class="hardware-panel panel"><div class="panel-heading"><h2>Connected hardware</h2><a href="#device" class="icon-link" aria-label="View device details"><svg class="icon"><use href="#i-arrow"/></svg></a></div><div id="hardwareSummary" class="hardware-list"></div><div class="hardware-footer"><svg class="icon"><use href="#i-device"/></svg><span id="nodeSummary">ESP32-S3 · awaiting connection</span></div></section>
         </div>
         <section class="panel clinician-review" aria-labelledby="reviewTitle">
           <div class="panel-heading"><div><h2 id="reviewTitle">Clinician review</h2><p>Record a local review note and follow-up decision for this patient.</p></div><span class="quiet-tag" id="reviewStatus">Not reviewed</span></div>
-          <form id="reviewForm"><div class="review-fields"><div><label for="reviewDecision">Review outcome</label><select id="reviewDecision"><option value="reviewed">Reviewed · no follow-up recorded</option><option value="follow_up">Follow-up visit recommended</option><option value="contact">Contact patient for assessment</option></select></div><div class="review-note-field"><label for="reviewNote">Clinical note <span>(optional)</span></label><input id="reviewNote" maxlength="2000" placeholder="Add context for the next review"></div><button class="button" id="saveReview" type="submit">Save review</button></div><p class="field-hint" id="reviewHint">Enroll the patient baseline to associate reviews with the correct patient.</p><p id="reviewError" class="form-error" role="alert" hidden></p></form>
+          <form id="reviewForm"><div class="review-fields"><div><label for="reviewAuthor">Your name or alias</label><input id="reviewAuthor" maxlength="80" autocomplete="name" required></div><div><label for="reviewDecision">Review outcome</label><select id="reviewDecision"><option value="reviewed">Reviewed · no follow-up recorded</option><option value="follow_up">Follow-up visit recommended</option><option value="contact">Contact patient for assessment</option></select></div><div class="review-note-field"><label for="reviewNote">Clinical note <span>(optional)</span></label><input id="reviewNote" maxlength="2000" placeholder="Add context for the next review"></div><button class="button" id="saveReview" type="submit">Save review</button></div><p class="field-hint" id="reviewHint">Enroll the patient baseline to associate reviews with the correct patient.</p><p id="reviewError" class="form-error" role="alert" hidden></p></form>
         </section>
       </section>
 
